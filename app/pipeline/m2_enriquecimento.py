@@ -51,7 +51,18 @@ def _safe_date(x: Any) -> Optional[pd.Timestamp]:
         ts = pd.Timestamp(x)
     else:
         try:
-            ts = pd.to_datetime(x, dayfirst=True, errors="coerce")
+            import re as _re
+            s = str(x).strip()
+            # Datas ISO 8601 (YYYY-MM-DD...) devem usar dayfirst=False
+            # Datas no formato brasileiro (DD/MM/YYYY) usam dayfirst=True
+            _iso_pat = _re.compile(r'^\d{4}-\d{2}-\d{2}')
+            _br_pat  = _re.compile(r'^\d{2}/\d{2}/\d{4}')
+            if _iso_pat.match(s):
+                ts = pd.to_datetime(s, dayfirst=False, errors="coerce")
+            elif _br_pat.match(s):
+                ts = pd.to_datetime(s, dayfirst=True, errors="coerce")
+            else:
+                ts = pd.to_datetime(s, dayfirst=True, errors="coerce")
             if pd.isna(ts):
                 return None
         except Exception:
