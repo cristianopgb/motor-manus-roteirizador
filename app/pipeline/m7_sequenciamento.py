@@ -91,6 +91,16 @@ def _sequenciar_manifesto(
 
     df = df_itens.copy().reset_index(drop=True)
 
+    # Garantir colunas necessárias para ordenação
+    if "folga_dias" not in df.columns:
+        df["folga_dias"] = float("nan")
+    else:
+        df["folga_dias"] = pd.to_numeric(df["folga_dias"], errors="coerce")
+    if "ranking_prioridade_operacional" not in df.columns:
+        df["ranking_prioridade_operacional"] = 999
+    else:
+        df["ranking_prioridade_operacional"] = pd.to_numeric(df["ranking_prioridade_operacional"], errors="coerce").fillna(999)
+
     # Calcular bucket de prioridade
     df["_bucket_seq"] = df.apply(_bucket_prioridade, axis=1)
 
