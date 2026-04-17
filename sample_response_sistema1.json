@@ -1,0 +1,408 @@
+{
+  "status": "sucesso",
+  "resumo": {
+    "data_base_roteirizacao": "2026-04-08T10:51:00",
+    "total_cargas_entrada": 390,
+    "total_manifestos": 26,
+    "total_itens_manifestados": 194,
+    "total_nao_roteirizados": 196,
+    "total_roteirizaveis": 272,
+    "total_agendamento_futuro": 51,
+    "total_agenda_vencida": 66,
+    "total_excecao_triagem": 1,
+    "km_total_frota": 7283.15,
+    "ocupacao_media_percentual": 81.24,
+    "tempo_processamento_ms": 17748
+  },
+  "encadeamento": [
+    {
+      "etapa": "M1_padronizacao",
+      "entrada": 390,
+      "saida_principal": 390,
+      "remanescente": 0,
+      "detalhes": {
+        "total_linhas_entrada": 390,
+        "total_linhas_validas": 390
+      }
+    },
+    {
+      "etapa": "M2_enriquecimento",
+      "entrada": 390,
+      "saida_principal": 390,
+      "remanescente": 0,
+      "detalhes": {
+        "data_base": "2026-04-08 10:51:00",
+        "fator_km": 1.2
+      }
+    },
+    {
+      "etapa": "M3_triagem",
+      "entrada": 390,
+      "saida_principal": 272,
+      "remanescente": 118,
+      "detalhes": {
+        "total_entrada": 390,
+        "roteirizavel": 272,
+        "agendamento_futuro": 51,
+        "agenda_vencida": 66,
+        "excecao_triagem": 1
+      }
+    },
+    {
+      "etapa": "M3_1_validacao_fronteira",
+      "entrada": 272,
+      "saida_principal": 272,
+      "remanescente": 0,
+      "detalhes": {
+        "total_entrada": 272,
+        "validos": 272,
+        "rejeitados": 0
+      }
+    },
+    {
+      "etapa": "M4_manifestos_fechados",
+      "entrada": 272,
+      "saida_principal": 29,
+      "remanescente": 243,
+      "detalhes": {
+        "total_entrada": 272,
+        "dedicados_encontrados": 2,
+        "manifestos_fechados": 13,
+        "itens_manifestados": 29,
+        "remanescente": 243
+      }
+    },
+    {
+      "etapa": "M5_1_triagem_cidades",
+      "entrada": 243,
+      "saida_principal": 129,
+      "remanescente": 114,
+      "detalhes": {
+        "total_entrada": 243,
+        "elegivel": 129,
+        "nao_elegivel": 114
+      }
+    },
+    {
+      "etapa": "M5_2_composicao_cidades",
+      "entrada": 129,
+      "saida_principal": 55,
+      "remanescente": 74,
+      "detalhes": {
+        "total_entrada": 129,
+        "pre_manifestos": 6,
+        "itens": 55,
+        "remanescente": 74
+      }
+    },
+    {
+      "etapa": "M5_3_composicao_subregioes",
+      "entrada": 188,
+      "saida_principal": 4,
+      "remanescente": 159,
+      "detalhes": {
+        "total_entrada": 188,
+        "pre_manifestos": 4,
+        "remanescente": 159
+      }
+    },
+    {
+      "etapa": "M5_4_composicao_mesorregioes",
+      "entrada": 159,
+      "saida_principal": 3,
+      "remanescente": 133,
+      "detalhes": {
+        "total_entrada": 159,
+        "pre_manifestos": 3,
+        "remanescente": 133
+      }
+    },
+    {
+      "etapa": "M6_1_consolidacao",
+      "entrada": 26,
+      "saida_principal": 26,
+      "remanescente": 0,
+      "detalhes": {
+        "modulo": "M6.1",
+        "data_base_roteirizacao": null,
+        "tipo_roteirizacao": "carteira",
+        "manifestos_base_total_m6": 26,
+        "itens_manifestos_base_total_m6": 139,
+        "pares_elegiveis_otimizacao_m6": 17,
+        "manifestos_exclusivos_base_m6": 2,
+        "mesorregioes_manifestos_base_m6": 5,
+        "fontes_consolidadas_m6": {
+          "manifestos_m4": 13,
+          "itens_m4": 29,
+          "manifestos_m5_2": 6,
+          "itens_m5_2": 55,
+          "manifestos_m5_3": 4,
+          "itens_m5_3": 29,
+          "manifestos_m5_4": 3,
+          "itens_m5_4": 26
+        },
+        "estrategia_m6_1": [
+          "consolidacao_multiorigem_manifestos",
+          "padronizacao_itens_e_manifestos",
+          "recomposicao_exclusividade_m4_a_partir_dos_itens",
+          "contrato_com_max_paradas_veiculo",
+          "contrato_com_veiculo_exclusivo_flag",
+          "fallback_veiculo_perfil_para_veiculo_tipo",
+          "estatistica_antes_da_otimizacao",
+          "score_criticidade_com_prioridade_ocupacao",
+          "pares_somente_dentro_da_mesma_mesorregiao",
+          "sem_otimizacao_nesta_etapa"
+        ],
+        "caminhos_pipeline": {}
+      }
+    },
+    {
+      "etapa": "M6_2_complemento_ocupacao",
+      "entrada": 139,
+      "saida_principal": 55,
+      "remanescente": 78,
+      "detalhes": {
+        "modulo": "M6.2",
+        "data_base_roteirizacao": "2026-04-17T16:56:40.825312",
+        "tipo_roteirizacao": "carteira",
+        "ocupacao_alvo_perc": 85.0,
+        "manifestos_base_total_m6_1": 26,
+        "manifestos_exclusivos_bloqueados_m6_2": 2,
+        "itens_manifestos_base_total_m6_1": 139,
+        "remanescente_m5_original_total": 133,
+        "manifestos_alvo_abaixo_ocupacao_alvo": 12,
+        "movimentos_aceitos_m6_2": 55,
+        "tentativas_total_m6_2": 208,
+        "itens_manifestos_total_m6_2": 194,
+        "itens_remanescente_m6_2": 78,
+        "itens_adicionados_a_manifestos_m6_2": 55,
+        "caminhos_pipeline": {}
+      }
+    },
+    {
+      "etapa": "M7_sequenciamento",
+      "entrada": 26,
+      "saida_principal": 194,
+      "remanescente": 0,
+      "detalhes": {
+        "total_manifestos": 26,
+        "total_itens": 194,
+        "km_total_frota": 7283.15
+      }
+    }
+  ],
+  "manifestos": [
+    {
+      "id_manifesto": "M4B1_0001",
+      "numero_manifesto": 1,
+      "veiculo_tipo": "VUC",
+      "veiculo_codigo": "",
+      "placa": "",
+      "num_eixos": null,
+      "capacidade_peso_kg": 3000.0,
+      "motorista": "",
+      "filial_origem": "",
+      "linha_operacao": "",
+      "regiao": "METROPOLITANA DE BELO HORIZONTE",
+      "data_roteirizacao": null,
+      "total_entregas": 1,
+      "total_peso_kg": 835.0,
+      "total_valor_mercadoria": 0,
+      "total_volumes": 0,
+      "km_estimado": 7.94,
+      "ocupacao_percentual": 27.8333,
+      "frete_minimo_antt": null,
+      "agendamentos": [],
+      "entregas": [
+        {
+          "sequencia": 1,
+          "nro_documento": "6845",
+          "lista_nfs": [
+            "6845"
+          ],
+          "doc_ctrc": "",
+          "remetente": "",
+          "destinatario": "8767 - DISTRIBUIDORA GAMA L",
+          "cidade": "BETIM",
+          "uf": "MG",
+          "cep": "",
+          "endereco": "",
+          "tipo_carga": "",
+          "peso_kg": 835.0,
+          "peso_bruto_kg": 835.0,
+          "qtd_volumes": null,
+          "valor_mercadoria": null,
+          "data_limite_entrega": null,
+          "agendada": false,
+          "data_agenda": null,
+          "hora_agenda": null,
+          "info_agendamento": null,
+          "distancia_km": 5.0,
+          "status_folga": "",
+          "folga_dias": null,
+          "latitude_destinatario": -19.9588,
+          "longitude_destinatario": -44.0666
+        }
+      ]
+    }
+  ],
+  "nao_roteirizados": [
+    {
+      "nro_documento": "23425",
+      "destinatario": "65739 - HOSPITAL MATER DEI S",
+      "cidade": "BELO HORIZONTE",
+      "uf": "MG",
+      "peso_kg": 996.12,
+      "valor_mercadoria": null,
+      "motivo": "",
+      "status_triagem": "agendamento_futuro",
+      "data_limite_entrega": "2026-04-13T07:00:00",
+      "data_agenda": "2026-04-13T07:00:00",
+      "agendada": true,
+      "folga_dias": 4.0,
+      "status_folga": "normal",
+      "mesorregiao": "METROPOLITANA DE BELO HORIZONTE",
+      "sub_regiao": "BELO HORIZON"
+    },
+    {
+      "nro_documento": "15905",
+      "destinatario": "647 - SUPERMERCADO BAHAMAS",
+      "cidade": "JUIZ DE FORA",
+      "uf": "MG",
+      "peso_kg": 1398.267,
+      "valor_mercadoria": null,
+      "motivo": "",
+      "status_triagem": "agendamento_futuro",
+      "data_limite_entrega": "2026-04-13T07:00:00",
+      "data_agenda": "2026-04-13T07:00:00",
+      "agendada": true,
+      "folga_dias": 4.0,
+      "status_folga": "normal",
+      "mesorregiao": "ZONA DA MATA",
+      "sub_regiao": "JUIZ DE FORA"
+    },
+    {
+      "nro_documento": "15991",
+      "destinatario": "73941 - WMS SUPERMERCADOS DO",
+      "cidade": "BELO HORIZONTE",
+      "uf": "MG",
+      "peso_kg": 236.24,
+      "valor_mercadoria": null,
+      "motivo": "",
+      "status_triagem": "agendamento_futuro",
+      "data_limite_entrega": "2026-04-13T07:00:00",
+      "data_agenda": "2026-04-13T07:00:00",
+      "agendada": true,
+      "folga_dias": 4.0,
+      "status_folga": "normal",
+      "mesorregiao": "METROPOLITANA DE BELO HORIZONTE",
+      "sub_regiao": "BELO HORIZON"
+    }
+  ],
+  "cargas_agendamento_futuro": [
+    {
+      "nro_documento": "23425",
+      "destinatario": "65739 - HOSPITAL MATER DEI S",
+      "cidade": "BELO HORIZONTE",
+      "uf": "MG",
+      "peso_kg": 996.12,
+      "valor_mercadoria": null,
+      "motivo": "",
+      "status_triagem": "agendamento_futuro",
+      "data_limite_entrega": "2026-04-13T07:00:00",
+      "data_agenda": "2026-04-13T07:00:00",
+      "agendada": true,
+      "folga_dias": 4.0,
+      "status_folga": "normal",
+      "mesorregiao": "METROPOLITANA DE BELO HORIZONTE",
+      "sub_regiao": "BELO HORIZON"
+    },
+    {
+      "nro_documento": "15905",
+      "destinatario": "647 - SUPERMERCADO BAHAMAS",
+      "cidade": "JUIZ DE FORA",
+      "uf": "MG",
+      "peso_kg": 1398.267,
+      "valor_mercadoria": null,
+      "motivo": "",
+      "status_triagem": "agendamento_futuro",
+      "data_limite_entrega": "2026-04-13T07:00:00",
+      "data_agenda": "2026-04-13T07:00:00",
+      "agendada": true,
+      "folga_dias": 4.0,
+      "status_folga": "normal",
+      "mesorregiao": "ZONA DA MATA",
+      "sub_regiao": "JUIZ DE FORA"
+    },
+    {
+      "nro_documento": "15991",
+      "destinatario": "73941 - WMS SUPERMERCADOS DO",
+      "cidade": "BELO HORIZONTE",
+      "uf": "MG",
+      "peso_kg": 236.24,
+      "valor_mercadoria": null,
+      "motivo": "",
+      "status_triagem": "agendamento_futuro",
+      "data_limite_entrega": "2026-04-13T07:00:00",
+      "data_agenda": "2026-04-13T07:00:00",
+      "agendada": true,
+      "folga_dias": 4.0,
+      "status_folga": "normal",
+      "mesorregiao": "METROPOLITANA DE BELO HORIZONTE",
+      "sub_regiao": "BELO HORIZON"
+    }
+  ],
+  "cargas_agenda_vencida": [
+    {
+      "nro_documento": "95",
+      "destinatario": "12620 - UPSIDE DISTRIBUIÇÃO",
+      "cidade": "CONTAGEM",
+      "uf": "MG",
+      "peso_kg": 7250.392,
+      "valor_mercadoria": null,
+      "motivo": "",
+      "status_triagem": "agenda_vencida",
+      "data_limite_entrega": "2025-12-26T06:00:00",
+      "data_agenda": "2025-12-26T06:00:00",
+      "agendada": true,
+      "folga_dias": -104.0,
+      "status_folga": "vencida",
+      "mesorregiao": "METROPOLITANA DE BELO HORIZONTE",
+      "sub_regiao": "BELO HORIZON"
+    },
+    {
+      "nro_documento": "5076",
+      "destinatario": "67116 - SENDAS DISTRIBUIDORA",
+      "cidade": "BETIM",
+      "uf": "MG",
+      "peso_kg": 210.168,
+      "valor_mercadoria": null,
+      "motivo": "",
+      "status_triagem": "agenda_vencida",
+      "data_limite_entrega": "2026-04-06T07:01:00",
+      "data_agenda": "2026-04-06T07:01:00",
+      "agendada": true,
+      "folga_dias": -3.0,
+      "status_folga": "vencida",
+      "mesorregiao": "METROPOLITANA DE BELO HORIZONTE",
+      "sub_regiao": "BELO HORIZON"
+    },
+    {
+      "nro_documento": "33227",
+      "destinatario": "67360 - SENDAS DISTRIBUIDORA",
+      "cidade": "IPATINGA",
+      "uf": "MG",
+      "peso_kg": 1925.394,
+      "valor_mercadoria": null,
+      "motivo": "",
+      "status_triagem": "agenda_vencida",
+      "data_limite_entrega": "2026-03-23T07:01:00",
+      "data_agenda": "2026-03-23T07:01:00",
+      "agendada": true,
+      "folga_dias": -17.0,
+      "status_folga": "vencida",
+      "mesorregiao": "VALE DO RIO DOCE",
+      "sub_regiao": "IPATINGA"
+    }
+  ]
+}
