@@ -46,14 +46,26 @@ def _safe_date(x: Any) -> Optional[pd.Timestamp]:
     except Exception:
         pass
     if isinstance(x, pd.Timestamp):
-        return x
-    if isinstance(x, datetime):
-        return pd.Timestamp(x)
+        ts = x
+    elif isinstance(x, datetime):
+        ts = pd.Timestamp(x)
+    else:
+        try:
+            ts = pd.to_datetime(x, dayfirst=True, errors="coerce")
+            if pd.isna(ts):
+                return None
+        except Exception:
+            return None
+    # Remover timezone para garantir comparações tz-naive
     try:
-        ts = pd.to_datetime(x, dayfirst=True, errors="coerce")
-        return None if pd.isna(ts) else ts
+        if ts.tzinfo is not None:
+            ts = ts.tz_localize(None)
     except Exception:
-        return None
+        try:
+            ts = ts.tz_convert(None)
+        except Exception:
+            pass
+    return ts
 
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
