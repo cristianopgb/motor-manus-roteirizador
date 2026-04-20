@@ -4,7 +4,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.roteirizacao import router as rot_router
-from app.models.schemas import HealthResponse
+from app.schemas import HealthResponse
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("motor")
