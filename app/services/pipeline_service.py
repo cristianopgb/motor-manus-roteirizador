@@ -21,6 +21,7 @@ from app.pipeline.m6_2_complemento_ocupacao import COLS_MANIFESTOS_OBRIGATORIAS,
 from app.pipeline.m7_sequenciamento_entregas import executar_m7_sequenciamento_entregas
 from app.schemas import RoteirizacaoRequest
 from app.services.payload_service import PipelineContext, normalizar_payload_para_pipeline
+from app.utils.json_safe import sanitizar_json_safe
 
 
 def _agora() -> float:
@@ -108,7 +109,9 @@ def _serializar_dataframe_para_records(
             df2[col] = df2[col].astype(str)
 
     df2 = df2.where(pd.notnull(df2), None)
-    return df2.to_dict(orient="records")
+    records = df2.to_dict(orient="records")
+    records_sanitizados, _ = sanitizar_json_safe(records)
+    return records_sanitizados
 
 
 def _montar_resumo_dataframe(df: pd.DataFrame, nome: str) -> Dict[str, Any]:
