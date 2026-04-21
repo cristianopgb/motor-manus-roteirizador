@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, time
 from typing import Any, Iterable, Optional
 
 from app.schemas import RoteirizacaoRequest
+
+logger = logging.getLogger("motor.validation")
 
 
 def _is_blank(value: Any) -> bool:
@@ -288,6 +291,11 @@ def validar_payload(payload: RoteirizacaoRequest) -> None:
     # ============================================================
     # BLOCOS OBRIGATÓRIOS
     # ============================================================
+    if len(payload.regionalidades) == 0:
+        logger.warning(
+            "Payload recebido sem regionalidades. Fallback geográfico externo desabilitado para esta execução."
+        )
+
     if len(payload.veiculos) == 0:
         raise ValueError("A lista de veículos enviada ao motor está vazia")
 
