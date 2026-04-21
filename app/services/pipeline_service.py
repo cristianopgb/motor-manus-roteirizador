@@ -724,6 +724,17 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     manifestos_sequenciamento_resumo_m7 = _serializar_dataframe_para_records(df_manifestos_sequenciamento_resumo_m7, limit=None)
     tentativas_sequenciamento_m7 = _serializar_dataframe_para_records(df_tentativas_sequenciamento_m7, limit=None)
     diagnostico_recuperacao_coordenadas_m7 = _serializar_dataframe_para_records(df_diagnostico_recuperacao_coordenadas_m7, limit=None)
+    nao_roteirizados_m6_2 = _serializar_dataframe_para_records(df_remanescente_m6_2, limit=None)
+
+    manifestos_fechados = []
+    manifestos_compostos = []
+    for manifesto in manifestos_m7:
+        origem_tipo = str(manifesto.get("origem_manifesto_tipo", "")).strip().lower()
+        origem_modulo = str(manifesto.get("origem_manifesto_modulo", "")).strip().upper()
+        if "manifesto_fechado" in origem_tipo or origem_modulo == "M4":
+            manifestos_fechados.append(manifesto)
+        else:
+            manifestos_compostos.append(manifesto)
 
     tempo_serializacao = _duracao_ms(t0)
     metricas_tempo["serializacao_resposta_ms"] = tempo_serializacao
@@ -794,6 +805,12 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             "parametros_rodada": contexto.parametros_rodada,
         },
         "manifestos_m7": manifestos_m7,
+        "manifestos_fechados": manifestos_fechados,
+        "manifestos_compostos": manifestos_compostos,
+        "nao_roteirizados": nao_roteirizados_m6_2,
+        "total_carteira": _safe_len(contexto.df_carteira_raw),
+        "total_roteirizado": _safe_len(df_itens_manifestos_sequenciados_m7),
+        "total_nao_roteirizado": _safe_len(df_remanescente_m6_2),
         "itens_manifestos_sequenciados_m7": itens_manifestos_sequenciados_m7,
         "manifestos_sequenciamento_resumo_m7": manifestos_sequenciamento_resumo_m7,
         "tentativas_sequenciamento_m7": tentativas_sequenciamento_m7,
