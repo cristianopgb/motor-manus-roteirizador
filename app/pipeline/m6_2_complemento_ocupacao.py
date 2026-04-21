@@ -87,6 +87,66 @@ COLS_REMANESCENTE_OBRIGATORIAS = [
 CHAVES_PARADA = ["destinatario", "cidade", "uf"]
 
 
+def _tem_schema_minimo(df: Optional[pd.DataFrame], colunas_obrigatorias: List[str]) -> bool:
+    if not isinstance(df, pd.DataFrame):
+        return False
+    return all(c in df.columns for c in colunas_obrigatorias)
+
+
+def _saida_m6_2_pulada(
+    df_manifestos_base_m6: Optional[pd.DataFrame],
+    df_itens_manifestos_base_m6: Optional[pd.DataFrame],
+    df_remanescente_m5_4: Optional[pd.DataFrame],
+    data_base_roteirizacao: datetime,
+    tipo_roteirizacao: str,
+    caminhos_pipeline: Optional[Dict[str, Any]],
+    ocupacao_alvo_perc: float,
+    motivo: str,
+) -> Dict[str, Any]:
+    df_manifestos = df_manifestos_base_m6.copy() if isinstance(df_manifestos_base_m6, pd.DataFrame) else pd.DataFrame(columns=COLS_MANIFESTOS_OBRIGATORIAS)
+    if not _tem_schema_minimo(df_manifestos, COLS_MANIFESTOS_OBRIGATORIAS):
+        df_manifestos = pd.DataFrame(columns=COLS_MANIFESTOS_OBRIGATORIAS)
+
+    df_itens = df_itens_manifestos_base_m6.copy() if isinstance(df_itens_manifestos_base_m6, pd.DataFrame) else pd.DataFrame(columns=COLS_ITENS_OBRIGATORIAS)
+    if not _tem_schema_minimo(df_itens, COLS_ITENS_OBRIGATORIAS):
+        df_itens = pd.DataFrame(columns=COLS_ITENS_OBRIGATORIAS)
+
+    df_remanescente = df_remanescente_m5_4.copy() if isinstance(df_remanescente_m5_4, pd.DataFrame) else pd.DataFrame(columns=COLS_REMANESCENTE_OBRIGATORIAS)
+    if not _tem_schema_minimo(df_remanescente, COLS_REMANESCENTE_OBRIGATORIAS):
+        df_remanescente = pd.DataFrame(columns=COLS_REMANESCENTE_OBRIGATORIAS)
+
+    resumo_m6_2 = {
+        "modulo": "M6.2",
+        "data_base_roteirizacao": data_base_roteirizacao.isoformat(),
+        "tipo_roteirizacao": tipo_roteirizacao,
+        "ocupacao_alvo_perc": float(ocupacao_alvo_perc),
+        "etapa_pulada": True,
+        "motivo_etapa_pulada": motivo,
+        "manifestos_base_total_m6_1": int(len(df_manifestos)),
+        "itens_manifestos_base_total_m6_1": int(len(df_itens)),
+        "remanescente_m5_original_total": int(len(df_remanescente)),
+        "manifestos_alvo_abaixo_ocupacao_alvo": 0,
+        "movimentos_aceitos_m6_2": 0,
+        "tentativas_total_m6_2": 0,
+        "itens_manifestos_total_m6_2": int(len(df_itens)),
+        "itens_remanescente_m6_2": int(len(df_remanescente)),
+        "itens_adicionados_a_manifestos_m6_2": 0,
+        "caminhos_pipeline": caminhos_pipeline or {},
+    }
+
+    return {
+        "outputs_m6_2": {
+            "df_manifestos_m6_2": df_manifestos.reset_index(drop=True),
+            "df_itens_manifestos_m6_2": df_itens.reset_index(drop=True),
+            "df_remanescente_m6_2": df_remanescente.reset_index(drop=True),
+            "df_remanescente_m5_original_m6_2": df_remanescente.reset_index(drop=True),
+            "df_tentativas_m6_2": pd.DataFrame(),
+            "df_movimentos_aceitos_m6_2": pd.DataFrame(),
+        },
+        "resumo_m6_2": resumo_m6_2,
+    }
+
+
 def executar_m6_2_complemento_ocupacao(
     df_manifestos_base_m6: pd.DataFrame,
     df_estatisticas_manifestos_antes_m6: pd.DataFrame,
@@ -97,6 +157,21 @@ def executar_m6_2_complemento_ocupacao(
     caminhos_pipeline: Optional[Dict[str, Any]] = None,
     ocupacao_alvo_perc: float = 85.0,
 ) -> Dict[str, Any]:
+    if (
+        not _tem_schema_minimo(df_manifestos_base_m6, COLS_MANIFESTOS_OBRIGATORIAS)
+        or df_manifestos_base_m6.empty
+    ):
+        return _saida_m6_2_pulada(
+            df_manifestos_base_m6=df_manifestos_base_m6,
+            df_itens_manifestos_base_m6=df_itens_manifestos_base_m6,
+            df_remanescente_m5_4=df_remanescente_m5_4,
+            data_base_roteirizacao=data_base_roteirizacao,
+            tipo_roteirizacao=tipo_roteirizacao,
+            caminhos_pipeline=caminhos_pipeline,
+            ocupacao_alvo_perc=ocupacao_alvo_perc,
+            motivo="M6.2 pulado por ausência de manifestos base válidos.",
+        )
+
     df_manifestos = _normalizar_manifestos(df_manifestos_base_m6)
     df_estats = _normalizar_estatisticas_m6(df_estatisticas_manifestos_antes_m6)
     df_itens = _normalizar_itens_manifestos(df_itens_manifestos_base_m6)

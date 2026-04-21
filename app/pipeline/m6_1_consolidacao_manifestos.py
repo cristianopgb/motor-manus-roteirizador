@@ -9,6 +9,57 @@ import pandas as pd
 # M6.1 - CONSOLIDAÇÃO E PREPARAÇÃO DA OTIMIZAÇÃO
 # =========================================================================================
 
+COLS_MANIFESTOS_BASE_M6 = [
+    "manifesto_id",
+    "origem_manifesto_modulo",
+    "origem_manifesto_tipo",
+    "veiculo_tipo",
+    "veiculo_perfil",
+    "veiculo_exclusivo_flag",
+    "texto_exclusivo_detectado_m6",
+    "peso_base_antes_m6",
+    "km_base_antes_m6",
+    "ocupacao_base_antes_m6",
+    "capacidade_peso_kg_veiculo",
+    "max_km_distancia_veiculo",
+    "max_paradas_veiculo",
+    "qtd_itens_base_antes_m6",
+    "qtd_ctes_base_antes_m6",
+    "qtd_paradas_base_antes_m6",
+]
+
+COLS_ITENS_MANIFESTOS_BASE_M6 = [
+    "manifesto_id",
+    "origem_manifesto_modulo",
+    "origem_manifesto_tipo",
+    "id_linha_pipeline",
+    "nro_documento",
+    "destinatario",
+    "cidade",
+    "uf",
+    "subregiao",
+    "mesorregiao",
+    "distancia_rodoviaria_est_km",
+    "peso_calculado",
+    "peso_kg",
+    "vol_m3",
+    "restricao_veiculo",
+    "veiculo_exclusivo_flag",
+    "origem_etapa",
+    "latitude_filial",
+    "longitude_filial",
+    "origem_latitude",
+    "origem_longitude",
+    "latitude_destinatario",
+    "longitude_destinatario",
+    "latitude",
+    "longitude",
+]
+
+
+def _empty_df(colunas: List[str]) -> pd.DataFrame:
+    return pd.DataFrame(columns=colunas)
+
 
 def _safe_text(value: Any) -> str:
     if value is None:
@@ -233,7 +284,7 @@ def _padronizar_manifestos(
     tipo_manifesto_origem: str,
 ) -> pd.DataFrame:
     if df_manifestos is None or df_manifestos.empty:
-        return pd.DataFrame()
+        return _empty_df(COLS_MANIFESTOS_BASE_M6)
 
     df = _normalizar_datetime_para_str(df_manifestos.copy())
 
@@ -323,7 +374,7 @@ def _padronizar_itens_manifestados(
     tipo_manifesto_origem: str,
 ) -> pd.DataFrame:
     if df_itens is None or df_itens.empty:
-        return pd.DataFrame()
+        return _empty_df(COLS_ITENS_MANIFESTOS_BASE_M6)
 
     df = _normalizar_datetime_para_str(df_itens.copy())
 
@@ -760,13 +811,13 @@ def executar_m6_1_consolidacao_manifestos(
     df_manifestos_base_m6 = (
         pd.concat([df for df in blocos_manifestos if df is not None and not df.empty], ignore_index=True)
         if any(df is not None and not df.empty for df in blocos_manifestos)
-        else pd.DataFrame()
+        else _empty_df(COLS_MANIFESTOS_BASE_M6)
     )
 
     df_itens_manifestos_base_m6 = (
         pd.concat([df for df in blocos_itens if df is not None and not df.empty], ignore_index=True)
         if any(df is not None and not df.empty for df in blocos_itens)
-        else pd.DataFrame()
+        else _empty_df(COLS_ITENS_MANIFESTOS_BASE_M6)
     )
 
     if not df_manifestos_base_m6.empty:

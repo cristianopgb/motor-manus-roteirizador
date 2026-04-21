@@ -17,7 +17,7 @@ from app.pipeline.m5_3_composicao_subregioes import executar_m5_3_composicao_sub
 from app.pipeline.m5_4a_triagem_mesorregioes import executar_m5_4a_triagem_mesorregioes
 from app.pipeline.m5_4b_composicao_mesorregioes import executar_m5_4b_composicao_mesorregioes
 from app.pipeline.m6_1_consolidacao_manifestos import executar_m6_1_consolidacao_manifestos
-from app.pipeline.m6_2_complemento_ocupacao import executar_m6_2_complemento_ocupacao
+from app.pipeline.m6_2_complemento_ocupacao import COLS_MANIFESTOS_OBRIGATORIAS, executar_m6_2_complemento_ocupacao
 from app.pipeline.m7_sequenciamento_entregas import executar_m7_sequenciamento_entregas
 from app.schemas import RoteirizacaoRequest
 from app.services.payload_service import PipelineContext, normalizar_payload_para_pipeline
@@ -117,6 +117,12 @@ def _montar_resumo_dataframe(df: pd.DataFrame, nome: str) -> Dict[str, Any]:
         "total_linhas": _safe_len(df),
         "qtd_colunas": int(len(df.columns)) if isinstance(df, pd.DataFrame) else 0,
     }
+
+
+def _tem_schema_minimo(df: Any, colunas_obrigatorias: List[str]) -> bool:
+    if not isinstance(df, pd.DataFrame):
+        return False
+    return all(c in df.columns for c in colunas_obrigatorias)
 
 
 def _executar_m0_adapter(contexto: PipelineContext) -> Dict[str, Any]:
@@ -628,16 +634,59 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # M6.2
     # =========================================================================================
     t0 = _agora()
-    resultado_m6_2 = executar_m6_2_complemento_ocupacao(
-        df_manifestos_base_m6=df_manifestos_base_m6,
-        df_estatisticas_manifestos_antes_m6=df_estatisticas_manifestos_antes_m6,
-        df_itens_manifestos_base_m6=df_itens_manifestos_base_m6,
-        df_remanescente_m5_4=df_remanescente_m5_4,
-        data_base_roteirizacao=contexto.data_base,
-        tipo_roteirizacao=contexto.tipo_roteirizacao,
-        caminhos_pipeline=contexto.caminhos_pipeline,
-        ocupacao_alvo_perc=85.0,
+    manifesto_schema_valido = _tem_schema_minimo(df_manifestos_base_m6, COLS_MANIFESTOS_OBRIGATORIAS)
+    manifesto_tem_id = isinstance(df_manifestos_base_m6, pd.DataFrame) and ("manifesto_id" in df_manifestos_base_m6.columns)
+    manifestos_base_validos_m6_2 = (
+        isinstance(df_manifestos_base_m6, pd.DataFrame)
+        and manifesto_schema_valido
+        and manifesto_tem_id
+        and (not df_manifestos_base_m6.empty)
     )
+
+    if manifestos_base_validos_m6_2:
+        resultado_m6_2 = executar_m6_2_complemento_ocupacao(
+            df_manifestos_base_m6=df_manifestos_base_m6,
+            df_estatisticas_manifestos_antes_m6=df_estatisticas_manifestos_antes_m6,
+            df_itens_manifestos_base_m6=df_itens_manifestos_base_m6,
+            df_remanescente_m5_4=df_remanescente_m5_4,
+            data_base_roteirizacao=contexto.data_base,
+            tipo_roteirizacao=contexto.tipo_roteirizacao,
+            caminhos_pipeline=contexto.caminhos_pipeline,
+            ocupacao_alvo_perc=85.0,
+        )
+    else:
+        resultado_m6_2 = {
+            "outputs_m6_2": {
+                "df_manifestos_m6_2": (
+                    df_manifestos_base_m6.copy()
+                    if isinstance(df_manifestos_base_m6, pd.DataFrame)
+                    else pd.DataFrame(columns=COLS_MANIFESTOS_OBRIGATORIAS)
+                ),
+                "df_itens_manifestos_m6_2": (
+                    df_itens_manifestos_base_m6.copy()
+                    if isinstance(df_itens_manifestos_base_m6, pd.DataFrame)
+                    else pd.DataFrame()
+                ),
+                "df_remanescente_m6_2": df_remanescente_m5_4.copy() if isinstance(df_remanescente_m5_4, pd.DataFrame) else pd.DataFrame(),
+                "df_remanescente_m5_original_m6_2": df_remanescente_m5_4.copy() if isinstance(df_remanescente_m5_4, pd.DataFrame) else pd.DataFrame(),
+                "df_tentativas_m6_2": pd.DataFrame(),
+                "df_movimentos_aceitos_m6_2": pd.DataFrame(),
+            },
+            "resumo_m6_2": {
+                "modulo": "M6.2",
+                "data_base_roteirizacao": contexto.data_base.isoformat(),
+                "tipo_roteirizacao": contexto.tipo_roteirizacao,
+                "ocupacao_alvo_perc": 85.0,
+                "etapa_pulada": True,
+                "motivo_etapa_pulada": "M6.2 ignorado: não há manifestos base válidos para complemento de ocupação",
+                "manifestos_base_total_m6_1": _safe_len(df_manifestos_base_m6),
+                "itens_manifestos_base_total_m6_1": _safe_len(df_itens_manifestos_base_m6),
+                "remanescente_m5_original_total": _safe_len(df_remanescente_m5_4),
+                "movimentos_aceitos_m6_2": 0,
+                "tentativas_total_m6_2": 0,
+                "caminhos_pipeline": contexto.caminhos_pipeline or {},
+            },
+        }
     tempo_m6_2 = _duracao_ms(t0)
     metricas_tempo["m6_2_complemento_ocupacao_ms"] = tempo_m6_2
 
@@ -654,8 +703,12 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     logs.append(
         _log(
             modulo="m6_2_complemento_ocupacao",
-            status="ok",
-            mensagem="M6.2 executado com sucesso",
+            status="ok" if manifestos_base_validos_m6_2 else "ignorado",
+            mensagem=(
+                "M6.2 executado com sucesso"
+                if manifestos_base_validos_m6_2
+                else "M6.2 ignorado: não há manifestos base válidos para complemento de ocupação"
+            ),
             quantidade_entrada=_safe_len(df_manifestos_base_m6),
             quantidade_saida=_safe_len(df_manifestos_m6_2),
             tempo_ms=tempo_m6_2,
@@ -674,15 +727,36 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # M7
     # =========================================================================================
     t0 = _agora()
-    outputs_m7, meta_m7 = executar_m7_sequenciamento_entregas(
-        df_manifestos_m6_2=df_manifestos_m6_2,
-        df_itens_manifestos_m6_2=df_itens_manifestos_m6_2,
-        df_geo_tratado=df_geo_tratado,
-        df_geo_raw=contexto.df_geo_raw,
-        data_base_roteirizacao=contexto.data_base,
-        tipo_roteirizacao=contexto.tipo_roteirizacao,
-        caminhos_pipeline=contexto.caminhos_pipeline,
-    )
+    if _safe_len(df_manifestos_m6_2) > 0 and _safe_len(df_itens_manifestos_m6_2) > 0:
+        outputs_m7, meta_m7 = executar_m7_sequenciamento_entregas(
+            df_manifestos_m6_2=df_manifestos_m6_2,
+            df_itens_manifestos_m6_2=df_itens_manifestos_m6_2,
+            df_geo_tratado=df_geo_tratado,
+            df_geo_raw=contexto.df_geo_raw,
+            data_base_roteirizacao=contexto.data_base,
+            tipo_roteirizacao=contexto.tipo_roteirizacao,
+            caminhos_pipeline=contexto.caminhos_pipeline,
+        )
+        status_log_m7 = "ok"
+        mensagem_log_m7 = "M7 executado com sucesso"
+    else:
+        outputs_m7 = {
+            "df_manifestos_m7": df_manifestos_m6_2.copy() if isinstance(df_manifestos_m6_2, pd.DataFrame) else pd.DataFrame(),
+            "df_itens_manifestos_sequenciados_m7": df_itens_manifestos_m6_2.copy() if isinstance(df_itens_manifestos_m6_2, pd.DataFrame) else pd.DataFrame(),
+            "df_manifestos_sequenciamento_resumo_m7": pd.DataFrame(),
+            "df_tentativas_sequenciamento_m7": pd.DataFrame(),
+            "df_diagnostico_recuperacao_coordenadas_m7": pd.DataFrame(),
+        }
+        meta_m7 = {
+            "resumo_m7": {
+                "modulo": "M7",
+                "etapa_pulada": True,
+                "motivo_etapa_pulada": "M7 ignorado: não há manifestos com itens após o M6.2",
+            },
+            "auditoria_m7": {},
+        }
+        status_log_m7 = "ignorado"
+        mensagem_log_m7 = "M7 ignorado: não há manifestos com itens após o M6.2"
     tempo_m7 = _duracao_ms(t0)
     metricas_tempo["m7_sequenciamento_entregas_ms"] = tempo_m7
 
@@ -698,8 +772,8 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     logs.append(
         _log(
             modulo="m7_sequenciamento_entregas",
-            status="ok",
-            mensagem="M7 executado com sucesso",
+            status=status_log_m7,
+            mensagem=mensagem_log_m7,
             quantidade_entrada=_safe_len(df_itens_manifestos_m6_2),
             quantidade_saida=_safe_len(df_itens_manifestos_sequenciados_m7),
             tempo_ms=tempo_m7,
