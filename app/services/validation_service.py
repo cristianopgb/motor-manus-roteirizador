@@ -291,9 +291,6 @@ def validar_payload(payload: RoteirizacaoRequest) -> None:
     if len(payload.veiculos) == 0:
         raise ValueError("A lista de veículos enviada ao motor está vazia")
 
-    if len(payload.regionalidades) == 0:
-        raise ValueError("A lista de regionalidades enviada ao motor está vazia")
-
     _validar_configuracao_frota(payload)
 
     # ============================================================

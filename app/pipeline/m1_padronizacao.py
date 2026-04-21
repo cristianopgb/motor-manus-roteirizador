@@ -475,6 +475,10 @@ def executar_m1_padronizacao(
         cols = [padronizar_nome_coluna(c) for c in df.columns]
         df.columns = garantir_colunas_unicas(cols)
 
+    geo_colunas_minimas = ["cidade", "uf", "mesorregiao", "microrregiao", "nome"]
+    if geo.empty:
+        geo = pd.DataFrame(columns=geo_colunas_minimas)
+
     carteira = _garantir_colunas_carteira_v2(carteira)
 
     # --------------------------------------------------------
@@ -752,14 +756,18 @@ def executar_m1_padronizacao(
     if "uf" not in carteira.columns:
         raise Exception("A carteira tratada não contém a coluna obrigatória 'uf'.")
 
-    if "cidade" not in geo.columns:
-        raise Exception("A base de regionalidades não contém a coluna obrigatória 'cidade'.")
+    if not geo.empty:
+        if "cidade" not in geo.columns:
+            raise Exception("A base de regionalidades não contém a coluna obrigatória 'cidade'.")
 
-    if "uf" not in geo.columns:
-        raise Exception("A base de regionalidades não contém a coluna obrigatória 'uf'.")
+        if "uf" not in geo.columns:
+            raise Exception("A base de regionalidades não contém a coluna obrigatória 'uf'.")
 
-    geo["cidade_chave"] = normalizar_chave_texto(geo["cidade"])
-    geo["uf_chave"] = normalizar_chave_texto(geo["uf"])
+        geo["cidade_chave"] = normalizar_chave_texto(geo["cidade"])
+        geo["uf_chave"] = normalizar_chave_texto(geo["uf"])
+    else:
+        geo["cidade_chave"] = pd.Series(dtype="object")
+        geo["uf_chave"] = pd.Series(dtype="object")
 
     carteira["cidade_chave"] = normalizar_chave_texto(carteira["cidade"])
     carteira["uf_chave"] = normalizar_chave_texto(carteira["uf"])
