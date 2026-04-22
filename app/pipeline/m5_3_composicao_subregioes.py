@@ -25,6 +25,24 @@ MAX_PREFIXOS_POR_PERFIL = 8
 MAX_TROCAS_1 = 20
 MAX_TROCAS_2 = 30
 
+COLS_PREMANIFESTOS_M5_3 = [
+    "manifesto_id", "tipo_manifesto", "subregiao", "veiculo_tipo", "veiculo_perfil", "qtd_itens",
+    "qtd_ctes", "qtd_paradas", "qtd_cidades", "base_carga_oficial", "peso_total_kg", "vol_total_m3",
+    "km_referencia", "ocupacao_oficial_perc", "capacidade_peso_kg_veiculo", "capacidade_vol_m3_veiculo",
+    "max_entregas_veiculo", "max_km_distancia_veiculo", "ocupacao_minima_perc_veiculo",
+    "ocupacao_maxima_perc_veiculo", "ignorar_ocupacao_minima", "origem_modulo", "origem_etapa",
+]
+
+COLS_TENTATIVAS_M5_3 = [
+    "subregiao", "tentativa_idx", "blocos_considerados", "veiculo_tipo_tentado", "veiculo_perfil_tentado",
+    "resultado", "motivo", "qtd_itens_candidato", "qtd_paradas_candidato", "peso_total_candidato",
+    "peso_kg_total_candidato", "volume_total_candidato", "km_referencia_candidato", "ocupacao_perc_candidato",
+]
+
+
+def _empty_like(colunas: List[str]) -> pd.DataFrame:
+    return pd.DataFrame(columns=colunas)
+
 
 def _drop_internal_cols(df: pd.DataFrame, suffix: str) -> pd.DataFrame:
     if df is None or df.empty:
@@ -671,26 +689,33 @@ def executar_m5_3_composicao_subregioes(
         else pd.DataFrame()
     )
 
-    if perfis_elegiveis.empty:
-        raise ValueError("M5.3B exige df_perfis_elegiveis_por_subregiao_m5_3.")
-
-    if saldo.empty:
+    if saldo.empty or perfis_elegiveis.empty:
+        motivo_pulo = "sem_saldo_elegivel_m5_3b" if saldo.empty else "sem_perfis_elegiveis_m5_3b"
+        df_remanescente = (
+            _drop_internal_cols(saldo.reset_index(drop=True), suffix=suffix)
+            if isinstance(saldo, pd.DataFrame)
+            else _empty_like([])
+        )
         outputs_vazio = {
-            "df_premanifestos_m5_3": pd.DataFrame(),
-            "df_itens_premanifestos_m5_3": pd.DataFrame(),
-            "df_tentativas_m5_3": pd.DataFrame(),
-            "df_remanescente_m5_3": pd.DataFrame(),
+            "df_premanifestos_m5_3": _empty_like(COLS_PREMANIFESTOS_M5_3),
+            "df_itens_premanifestos_m5_3": _empty_like(list(df_remanescente.columns) + COLS_PREMANIFESTOS_M5_3),
+            "df_tentativas_m5_3": _empty_like(COLS_TENTATIVAS_M5_3),
+            "df_remanescente_m5_3": df_remanescente,
         }
         meta_vazio = {
             "resumo_m5_3b": {
                 "modulo": "M5.3B",
                 "data_base_roteirizacao": str(data_base_roteirizacao) if data_base_roteirizacao is not None else None,
                 "tipo_roteirizacao": tipo_roteirizacao,
+                "etapa_pulada": True,
+                "motivo_etapa_pulada": motivo_pulo,
                 "linhas_entrada_m5_3": 0,
                 "pre_manifestos_gerados_m5_3": 0,
                 "itens_pre_manifestados_m5_3": 0,
-                "remanescente_saida_m5_3": 0,
+                "remanescente_saida_m5_3": int(len(df_remanescente)),
                 "subregioes_processadas_m5_3": 0,
+                "linhas_saida_m5_3": 0,
+                "remanescente_preservado_m5_3": int(len(df_remanescente)),
                 "estrategia_m5_3": [
                     "subregiao_por_subregiao",
                     "solver_guiado_com_poda",
@@ -706,8 +731,9 @@ def executar_m5_3_composicao_subregioes(
                 "total_tentativas": 0,
                 "total_pre_manifestos": 0,
                 "total_itens_pre_manifestados": 0,
-                "total_remanescentes": 0,
+                "total_remanescentes": int(len(df_remanescente)),
                 "total_subregioes_processadas": 0,
+                "motivo_etapa_pulada": motivo_pulo,
             },
         }
         return outputs_vazio, meta_vazio

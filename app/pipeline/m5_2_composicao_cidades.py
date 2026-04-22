@@ -53,6 +53,24 @@ MAX_PREFIXOS_POR_PERFIL = 8
 MAX_TROCAS_1 = 20
 MAX_TROCAS_2 = 30
 
+COLS_PREMANIFESTOS_M5_2 = [
+    "manifesto_id", "tipo_manifesto", "cidade", "uf", "veiculo_tipo", "veiculo_perfil", "qtd_itens",
+    "qtd_ctes", "qtd_paradas", "base_carga_oficial", "peso_total_kg", "vol_total_m3", "km_referencia",
+    "ocupacao_oficial_perc", "capacidade_peso_kg_veiculo", "capacidade_vol_m3_veiculo", "max_entregas_veiculo",
+    "max_km_distancia_veiculo", "ocupacao_minima_perc_veiculo", "ocupacao_maxima_perc_veiculo",
+    "ignorar_ocupacao_minima", "origem_modulo", "origem_etapa",
+]
+
+COLS_TENTATIVAS_M5_2 = [
+    "cidade", "uf", "tentativa_idx", "blocos_considerados", "veiculo_tipo_tentado", "veiculo_perfil_tentado",
+    "resultado", "motivo", "qtd_itens_candidato", "qtd_paradas_candidato", "peso_total_candidato",
+    "peso_kg_total_candidato", "volume_total_candidato", "km_referencia_candidato", "ocupacao_perc_candidato",
+]
+
+
+def _empty_like(colunas: List[str]) -> pd.DataFrame:
+    return pd.DataFrame(columns=colunas)
+
 
 # -----------------------------------------------------------------------------------------
 # Helpers locais
@@ -638,26 +656,33 @@ def executar_m5_2_composicao_cidades(
         else pd.DataFrame()
     )
 
-    if perfis_elegiveis.empty:
-        raise ValueError("M5.2 exige df_perfis_elegiveis_por_cidade_m5_1.")
-
-    if saldo.empty:
+    if saldo.empty or perfis_elegiveis.empty:
+        motivo_pulo = "sem_saldo_elegivel_m5_2" if saldo.empty else "sem_perfis_elegiveis_m5_2"
+        df_remanescente = (
+            _drop_internal_cols(saldo.reset_index(drop=True), suffix=suffix)
+            if isinstance(saldo, pd.DataFrame)
+            else _empty_like([])
+        )
         outputs_vazio = {
-            "df_premanifestos_m5_2": pd.DataFrame(),
-            "df_itens_premanifestos_m5_2": pd.DataFrame(),
-            "df_tentativas_m5_2": pd.DataFrame(),
-            "df_remanescente_m5_2": pd.DataFrame(),
+            "df_premanifestos_m5_2": _empty_like(COLS_PREMANIFESTOS_M5_2),
+            "df_itens_premanifestos_m5_2": _empty_like(list(df_remanescente.columns) + COLS_PREMANIFESTOS_M5_2),
+            "df_tentativas_m5_2": _empty_like(COLS_TENTATIVAS_M5_2),
+            "df_remanescente_m5_2": df_remanescente,
         }
         meta_vazio = {
             "resumo_m5_2": {
                 "modulo": "M5.2",
                 "data_base_roteirizacao": str(data_base_roteirizacao) if data_base_roteirizacao is not None else None,
                 "tipo_roteirizacao": tipo_roteirizacao,
+                "etapa_pulada": True,
+                "motivo_etapa_pulada": motivo_pulo,
                 "linhas_entrada_m5_2": 0,
                 "pre_manifestos_gerados_m5_2": 0,
                 "itens_pre_manifestados_m5_2": 0,
-                "remanescente_saida_m5_2": 0,
+                "remanescente_saida_m5_2": int(len(df_remanescente)),
                 "cidades_processadas_m5_2": 0,
+                "linhas_saida_m5_2": 0,
+                "remanescente_preservado_m5_2": int(len(df_remanescente)),
                 "estrategia_m5_2": [
                     "cidade_por_cidade",
                     "solver_guiado_com_poda",
@@ -672,8 +697,9 @@ def executar_m5_2_composicao_cidades(
                 "total_tentativas": 0,
                 "total_pre_manifestos": 0,
                 "total_itens_pre_manifestados": 0,
-                "total_remanescentes": 0,
+                "total_remanescentes": int(len(df_remanescente)),
                 "total_cidades_processadas": 0,
+                "motivo_etapa_pulada": motivo_pulo,
             },
         }
         return outputs_vazio, meta_vazio

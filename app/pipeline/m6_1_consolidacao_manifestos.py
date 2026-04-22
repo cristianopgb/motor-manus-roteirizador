@@ -368,6 +368,19 @@ def _padronizar_manifestos(
     return out
 
 
+def _padronizar_manifestos_safe(
+    df_manifestos: Optional[pd.DataFrame],
+    origem_modulo: str,
+    tipo_manifesto_origem: str,
+    avisos: List[str],
+) -> pd.DataFrame:
+    try:
+        return _padronizar_manifestos(df_manifestos, origem_modulo, tipo_manifesto_origem)
+    except Exception as e:
+        avisos.append(f"{origem_modulo}:schema_manifestos_invalido:{str(e)}")
+        return _empty_df(COLS_MANIFESTOS_BASE_M6)
+
+
 def _padronizar_itens_manifestados(
     df_itens: Optional[pd.DataFrame],
     origem_modulo: str,
@@ -455,6 +468,19 @@ def _padronizar_itens_manifestados(
     out = out.drop_duplicates(subset=["manifesto_id", "id_linha_pipeline"], keep="first").reset_index(drop=True)
 
     return out
+
+
+def _padronizar_itens_manifestados_safe(
+    df_itens: Optional[pd.DataFrame],
+    origem_modulo: str,
+    tipo_manifesto_origem: str,
+    avisos: List[str],
+) -> pd.DataFrame:
+    try:
+        return _padronizar_itens_manifestados(df_itens, origem_modulo, tipo_manifesto_origem)
+    except Exception as e:
+        avisos.append(f"{origem_modulo}:schema_itens_invalido:{str(e)}")
+        return _empty_df(COLS_ITENS_MANIFESTOS_BASE_M6)
 
 
 def _recompor_exclusividade_manifestos_m4(
@@ -793,19 +819,20 @@ def executar_m6_1_consolidacao_manifestos(
     **kwargs: Any,
 ) -> Tuple[Dict[str, pd.DataFrame], Dict[str, Any]]:
     del kwargs
+    avisos_consolidacao: List[str] = []
 
     blocos_manifestos = [
-        _padronizar_manifestos(df_manifestos_m4, "M4", "manifesto_fechado"),
-        _padronizar_manifestos(df_premanifestos_m5_2, "M5.2", "pre_manifesto_cidade"),
-        _padronizar_manifestos(df_premanifestos_m5_3, "M5.3B", "pre_manifesto_subregiao"),
-        _padronizar_manifestos(df_premanifestos_m5_4, "M5.4B", "pre_manifesto_mesorregiao"),
+        _padronizar_manifestos_safe(df_manifestos_m4, "M4", "manifesto_fechado", avisos_consolidacao),
+        _padronizar_manifestos_safe(df_premanifestos_m5_2, "M5.2", "pre_manifesto_cidade", avisos_consolidacao),
+        _padronizar_manifestos_safe(df_premanifestos_m5_3, "M5.3B", "pre_manifesto_subregiao", avisos_consolidacao),
+        _padronizar_manifestos_safe(df_premanifestos_m5_4, "M5.4B", "pre_manifesto_mesorregiao", avisos_consolidacao),
     ]
 
     blocos_itens = [
-        _padronizar_itens_manifestados(df_itens_manifestados_m4, "M4", "manifesto_fechado"),
-        _padronizar_itens_manifestados(df_itens_premanifestos_m5_2, "M5.2", "pre_manifesto_cidade"),
-        _padronizar_itens_manifestados(df_itens_premanifestos_m5_3, "M5.3B", "pre_manifesto_subregiao"),
-        _padronizar_itens_manifestados(df_itens_premanifestos_m5_4, "M5.4B", "pre_manifesto_mesorregiao"),
+        _padronizar_itens_manifestados_safe(df_itens_manifestados_m4, "M4", "manifesto_fechado", avisos_consolidacao),
+        _padronizar_itens_manifestados_safe(df_itens_premanifestos_m5_2, "M5.2", "pre_manifesto_cidade", avisos_consolidacao),
+        _padronizar_itens_manifestados_safe(df_itens_premanifestos_m5_3, "M5.3B", "pre_manifesto_subregiao", avisos_consolidacao),
+        _padronizar_itens_manifestados_safe(df_itens_premanifestos_m5_4, "M5.4B", "pre_manifesto_mesorregiao", avisos_consolidacao),
     ]
 
     df_manifestos_base_m6 = (
@@ -848,6 +875,15 @@ def executar_m6_1_consolidacao_manifestos(
         "manifestos_base_total_m6": int(len(df_manifestos_base_m6)),
         "itens_manifestos_base_total_m6": int(len(df_itens_manifestos_base_m6)),
         "pares_elegiveis_otimizacao_m6": int(len(df_pares_elegiveis_otimizacao_m6)),
+        "etapa_pulada": bool(df_manifestos_base_m6.empty and df_itens_manifestos_base_m6.empty),
+        "motivo_etapa_pulada": "sem_manifestos_base_m6_1"
+        if df_manifestos_base_m6.empty and df_itens_manifestos_base_m6.empty
+        else None,
+        "linhas_entrada_m6_1": int(
+            sum(len(df) for df in [df_manifestos_m4, df_premanifestos_m5_2, df_premanifestos_m5_3, df_premanifestos_m5_4] if isinstance(df, pd.DataFrame))
+        ),
+        "linhas_saida_m6_1": int(len(df_manifestos_base_m6)),
+        "avisos_consolidacao_m6_1": avisos_consolidacao,
         "manifestos_exclusivos_base_m6": int(df_manifestos_base_m6["veiculo_exclusivo_flag"].fillna(False).astype(bool).sum()) if not df_manifestos_base_m6.empty else 0,
         "mesorregioes_manifestos_base_m6": int(
             df_manifestos_scored_m6["mesorregiao_manifesto_m6"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique()

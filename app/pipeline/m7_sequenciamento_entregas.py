@@ -11,6 +11,11 @@ import pandas as pd
 TIME_LIMIT_SECONDS_PADRAO = 5
 FATOR_KM_RODOVIARIO_M7_PADRAO = 1.20
 VERSAO_M7 = "NOVA_VERSAO_FILIAL_PRIMEIRA"
+COLS_MANIFESTOS_M7_MIN = ["manifesto_id"]
+COLS_ITENS_SEQ_M7_MIN = ["manifesto_id", "id_linha_pipeline", "ordem_entrega_doc_m7", "ordem_carregamento_doc_m7"]
+COLS_RESUMO_SEQ_M7_MIN = ["manifesto_id", "status_sequenciamento_m7", "metodo_predominante_m7"]
+COLS_TENTATIVAS_SEQ_M7_MIN = ["manifesto_id", "resultado", "motivo", "qtd_docs"]
+COLS_DIAGNOSTICO_COORD_M7_MIN = ["indicador", "valor"]
 
 
 # =========================================================================================
@@ -1578,11 +1583,50 @@ def executar_m7_sequenciamento_entregas(
     del df_geo_raw
     del time_limit_seconds
 
-    if not isinstance(df_manifestos_m6_2, pd.DataFrame) or df_manifestos_m6_2.empty:
-        raise Exception("M7 recebeu df_manifestos_m6_2 vazio.")
-
-    if not isinstance(df_itens_manifestos_m6_2, pd.DataFrame) or df_itens_manifestos_m6_2.empty:
-        raise Exception("M7 recebeu df_itens_manifestos_m6_2 vazio.")
+    if (
+        not isinstance(df_manifestos_m6_2, pd.DataFrame)
+        or df_manifestos_m6_2.empty
+        or not isinstance(df_itens_manifestos_m6_2, pd.DataFrame)
+        or df_itens_manifestos_m6_2.empty
+    ):
+        outputs_vazio = {
+            "df_manifestos_m7": (
+                df_manifestos_m6_2.copy()
+                if isinstance(df_manifestos_m6_2, pd.DataFrame)
+                else pd.DataFrame(columns=COLS_MANIFESTOS_M7_MIN)
+            ),
+            "df_itens_manifestos_sequenciados_m7": (
+                df_itens_manifestos_m6_2.copy()
+                if isinstance(df_itens_manifestos_m6_2, pd.DataFrame)
+                else pd.DataFrame(columns=COLS_ITENS_SEQ_M7_MIN)
+            ),
+            "df_manifestos_sequenciamento_resumo_m7": pd.DataFrame(columns=COLS_RESUMO_SEQ_M7_MIN),
+            "df_cidades_sequenciamento_resumo_m7": pd.DataFrame(),
+            "df_tentativas_sequenciamento_m7": pd.DataFrame(columns=COLS_TENTATIVAS_SEQ_M7_MIN),
+            "df_diagnostico_recuperacao_coordenadas_m7": pd.DataFrame(columns=COLS_DIAGNOSTICO_COORD_M7_MIN),
+        }
+        meta_vazio = {
+            "resumo_m7": {
+                "modulo": "M7",
+                "data_base_roteirizacao": (
+                    data_base_roteirizacao.isoformat()
+                    if isinstance(data_base_roteirizacao, datetime)
+                    else str(data_base_roteirizacao)
+                    if data_base_roteirizacao is not None
+                    else None
+                ),
+                "tipo_roteirizacao": tipo_roteirizacao,
+                "etapa_pulada": True,
+                "motivo_etapa_pulada": "sem_manifestos_para_sequenciamento_m7",
+                "manifestos_entrada_m7": int(len(df_manifestos_m6_2)) if isinstance(df_manifestos_m6_2, pd.DataFrame) else 0,
+                "itens_entrada_m7": int(len(df_itens_manifestos_m6_2)) if isinstance(df_itens_manifestos_m6_2, pd.DataFrame) else 0,
+                "manifestos_saida_m7": 0,
+                "itens_saida_m7": 0,
+                "caminhos_pipeline": caminhos_pipeline or {},
+            },
+            "auditoria_m7": {},
+        }
+        return outputs_vazio, meta_vazio
 
     df_manifestos = _normalizar_manifestos(df_manifestos_m6_2)
     df_itens = _normalizar_itens(df_itens_manifestos_m6_2)
