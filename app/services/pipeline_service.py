@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from typing import Any, Dict, List
 
 import pandas as pd
@@ -20,8 +21,22 @@ from app.pipeline.m6_1_consolidacao_manifestos import executar_m6_1_consolidacao
 from app.pipeline.m6_2_complemento_ocupacao import COLS_MANIFESTOS_OBRIGATORIAS, executar_m6_2_complemento_ocupacao
 from app.pipeline.m7_sequenciamento_entregas import executar_m7_sequenciamento_entregas
 from app.schemas import RoteirizacaoRequest
+from app.services.auditoria_pipeline_service import persistir_snapshot_modulo_auditoria
 from app.services.payload_service import PipelineContext, normalizar_payload_para_pipeline
 from app.utils.json_safe import sanitizar_json_safe
+
+PIPELINE_FLAGS = {
+    "executar_m4": False,
+    "executar_m5_1": False,
+    "executar_m5_2": False,
+    "executar_m5_3a": False,
+    "executar_m5_3b": False,
+    "executar_m5_4a": False,
+    "executar_m5_4b": False,
+    "executar_m6_1": False,
+    "executar_m6_2": False,
+    "executar_m7": False,
+}
 
 
 def _agora() -> float:
@@ -167,6 +182,18 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     logs: List[Dict[str, Any]] = []
     metricas_tempo: Dict[str, float] = {}
     debug = _is_debug(payload)
+    teste_id_auditoria = str(uuid.uuid4())
+    print("[AUDITORIA] teste_id:", teste_id_auditoria)
+    print("[PIPELINE FLAGS] executar_m4=", PIPELINE_FLAGS["executar_m4"])
+    print("[PIPELINE FLAGS] executar_m5_1=", PIPELINE_FLAGS["executar_m5_1"])
+    print("[PIPELINE FLAGS] executar_m5_2=", PIPELINE_FLAGS["executar_m5_2"])
+    print("[PIPELINE FLAGS] executar_m5_3a=", PIPELINE_FLAGS["executar_m5_3a"])
+    print("[PIPELINE FLAGS] executar_m5_3b=", PIPELINE_FLAGS["executar_m5_3b"])
+    print("[PIPELINE FLAGS] executar_m5_4a=", PIPELINE_FLAGS["executar_m5_4a"])
+    print("[PIPELINE FLAGS] executar_m5_4b=", PIPELINE_FLAGS["executar_m5_4b"])
+    print("[PIPELINE FLAGS] executar_m6_1=", PIPELINE_FLAGS["executar_m6_1"])
+    print("[PIPELINE FLAGS] executar_m6_2=", PIPELINE_FLAGS["executar_m6_2"])
+    print("[PIPELINE FLAGS] executar_m7=", PIPELINE_FLAGS["executar_m7"])
 
     # =========================================================================================
     # PAYLOAD -> CONTEXTO
@@ -192,6 +219,22 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             },
         )
     )
+    contexto_auditoria = {
+        "filial_id": contexto.filial_id,
+        "usuario_id": contexto.usuario_id,
+        "tipo_roteirizacao": contexto.tipo_roteirizacao,
+        "data_base_roteirizacao": contexto.data_base.isoformat(),
+    }
+    total_payload = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="payload_service",
+        ordem_modulo=0,
+        df_etapa=contexto.df_carteira_raw,
+        contexto=contexto_auditoria,
+    )
+    print("[AUDITORIA] snapshot salvo modulo=payload_service linhas=", total_payload)
 
     # =========================================================================================
     # M0
@@ -216,6 +259,16 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             },
         )
     )
+    total_m0 = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m0_adapter",
+        ordem_modulo=1,
+        df_etapa=resultado_m0["df_carteira_raw"],
+        contexto=contexto_auditoria,
+    )
+    print("[AUDITORIA] snapshot salvo modulo=m0_adapter linhas=", total_m0)
 
     # =========================================================================================
     # M1
@@ -253,6 +306,16 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             extra=resumo_m1,
         )
     )
+    total_m1 = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m1_padronizacao",
+        ordem_modulo=2,
+        df_etapa=df_carteira_tratada,
+        contexto=contexto_auditoria,
+    )
+    print("[AUDITORIA] snapshot salvo modulo=m1_padronizacao linhas=", total_m1)
 
     # =========================================================================================
     # M2
@@ -279,6 +342,16 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             extra=resumo_m2,
         )
     )
+    total_m2 = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m2_enriquecimento",
+        ordem_modulo=3,
+        df_etapa=df_carteira_enriquecida,
+        contexto=contexto_auditoria,
+    )
+    print("[AUDITORIA] snapshot salvo modulo=m2_enriquecimento linhas=", total_m2)
 
     # =========================================================================================
     # M3
@@ -310,6 +383,16 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             extra=resumo_m3,
         )
     )
+    total_m3 = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m3_triagem",
+        ordem_modulo=4,
+        df_etapa=df_carteira_triagem,
+        contexto=contexto_auditoria,
+    )
+    print("[AUDITORIA] snapshot salvo modulo=m3_triagem linhas=", total_m3)
 
     # =========================================================================================
     # M3.1
@@ -336,6 +419,53 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             extra=resumo_m31,
         )
     )
+    total_m3_1 = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m3_1_validacao_fronteira",
+        ordem_modulo=5,
+        df_etapa=df_input_oficial_bloco_4,
+        contexto=contexto_auditoria,
+    )
+    print("[AUDITORIA] snapshot salvo modulo=m3_1_validacao_fronteira linhas=", total_m3_1)
+
+    if not PIPELINE_FLAGS["executar_m4"]:
+        tempo_total = _duracao_ms(inicio_total)
+        metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
+        return {
+            "status": "ok",
+            "mensagem": "Execução encerrada propositalmente na etapa base de auditoria (M3.1).",
+            "pipeline_real_ate": "M3.1",
+            "modo_resposta": "auditoria_base_modular",
+            "resposta_truncada": False,
+            "teste_id_auditoria": teste_id_auditoria,
+            "resumo_execucao": {
+                "rodada_id": contexto.rodada_id,
+                "upload_id": contexto.upload_id,
+                "usuario_id": contexto.usuario_id,
+                "filial_id": contexto.filial_id,
+                "tipo_roteirizacao": contexto.tipo_roteirizacao,
+                "data_base_roteirizacao": contexto.data_base.isoformat(),
+                "tempos_ms": metricas_tempo,
+            },
+            "resumo_negocio": {
+                "total_carteira": _safe_len(contexto.df_carteira_raw),
+                "total_enriquecida_m2": _safe_len(df_carteira_enriquecida),
+                "total_triagem_m3": _safe_len(df_carteira_triagem),
+                "total_roteirizavel_m3": _safe_len(df_carteira_roteirizavel),
+                "total_agendamento_futuro_m3": _safe_len(df_carteira_agendamento_futuro),
+                "total_agendas_vencidas_m3": _safe_len(df_carteira_agendas_vencidas),
+                "total_input_bloco_4": _safe_len(df_input_oficial_bloco_4),
+                "resumo_m3": resumo_m3,
+                "resumo_m31": resumo_m31,
+            },
+            "contexto_rodada": {
+                "filial": contexto.filial,
+                "parametros_rodada": contexto.parametros_rodada,
+            },
+            "logs": logs,
+        }
 
     # =========================================================================================
     # M4
@@ -887,6 +1017,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         "pipeline_real_ate": "M7",
         "modo_resposta": "auditoria_m7_sequenciamento_entregas",
         "resposta_truncada": False,
+        "teste_id_auditoria": teste_id_auditoria,
         "resumo_execucao": {
             "rodada_id": contexto.rodada_id,
             "upload_id": contexto.upload_id,
@@ -1042,6 +1173,7 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             "pipeline_real_ate": "ERRO",
             "modo_resposta": "auditoria_m7_sequenciamento_entregas",
             "resposta_truncada": False,
+            "teste_id_auditoria": None,
             "resumo_execucao": {
                 "rodada_id": getattr(payload, "rodada_id", None),
                 "upload_id": getattr(payload, "upload_id", None),
