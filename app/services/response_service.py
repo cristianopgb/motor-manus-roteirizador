@@ -33,66 +33,19 @@ def _is_manifesto_composto(manifesto: Dict[str, Any]) -> bool:
 
 def montar_resposta_sucesso(resultado_pipeline: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Monta a resposta padronizada de sucesso a partir do resultado do pipeline.
+    Preserva contrato completo retornado pelo pipeline.
     """
-
-    manifestos_fechados = _safe_list(resultado_pipeline.get("manifestos_fechados"))
-    manifestos_compostos = _safe_list(resultado_pipeline.get("manifestos_compostos"))
-    nao_roteirizados = _safe_list(resultado_pipeline.get("nao_roteirizados"))
-    logs = resultado_pipeline.get("logs", [])
-
-    manifestos_m7 = _safe_list(resultado_pipeline.get("manifestos_m7"))
-    resumo_negocio = resultado_pipeline.get("resumo_negocio", {}) or {}
-
-    if not manifestos_fechados and manifestos_m7:
-        manifestos_fechados = [m for m in manifestos_m7 if _is_manifesto_fechado(m)]
-
-    if not manifestos_compostos and manifestos_m7:
-        manifestos_compostos = [m for m in manifestos_m7 if _is_manifesto_composto(m)]
-
-    total_carteira = resultado_pipeline.get(
-        "total_carteira",
-        resumo_negocio.get("total_carteira", 0),
-    )
-    total_roteirizado = resultado_pipeline.get(
-        "total_roteirizado",
-        resumo_negocio.get("total_itens_manifestos_sequenciados_m7", 0),
-    )
-    total_nao_roteirizado = resultado_pipeline.get(
-        "total_nao_roteirizado",
-        resultado_pipeline.get(
-            "total_nao_roteirizados",
-            len(nao_roteirizados) if nao_roteirizados else resumo_negocio.get("total_remanescente_m6_2", 0),
-        ),
-    )
-
-    total_manifestos_fechados = len(manifestos_fechados)
-    total_manifestos_compostos = len(manifestos_compostos)
-
-    print("[RESPONSE] chaves de saída disponíveis:", list(resultado_pipeline.keys()))
-    print("[RESPONSE] total manifestos fechados serializados:", len(manifestos_fechados))
-    print("[RESPONSE] total manifestos compostos serializados:", len(manifestos_compostos))
-    print("[RESPONSE] total nao roteirizados serializados:", len(nao_roteirizados))
-
-    resumo = {
-        "total_carteira": total_carteira,
-        "total_roteirizado": total_roteirizado,
-        "total_nao_roteirizado": total_nao_roteirizado,
-        "total_manifestos_fechados": total_manifestos_fechados,
-        "total_manifestos_compostos": total_manifestos_compostos,
-        "ocupacao_media_peso": resultado_pipeline.get("ocupacao_media_peso", 0),
-        "ocupacao_media_volume": resultado_pipeline.get("ocupacao_media_volume", 0),
-    }
-
-    return {
-        "status": "sucesso",
-        "mensagem": "Roteirização executada com sucesso",
-        "resumo": resumo,
-        "manifestos_fechados": manifestos_fechados,
-        "manifestos_compostos": manifestos_compostos,
-        "nao_roteirizados": nao_roteirizados,
-        "logs": logs,
-    }
+    resposta = dict(resultado_pipeline or {})
+    resposta.setdefault("manifestos_m7", _safe_list(resposta.get("manifestos_m7")))
+    resposta.setdefault("itens_manifestos_sequenciados_m7", _safe_list(resposta.get("itens_manifestos_sequenciados_m7")))
+    resposta.setdefault("manifestos_sequenciamento_resumo_m7", _safe_list(resposta.get("manifestos_sequenciamento_resumo_m7")))
+    resposta.setdefault("tentativas_sequenciamento_m7", _safe_list(resposta.get("tentativas_sequenciamento_m7")))
+    resposta.setdefault("diagnostico_recuperacao_coordenadas_m7", _safe_list(resposta.get("diagnostico_recuperacao_coordenadas_m7")))
+    resposta.setdefault("remanescentes", {"nao_roteirizaveis_m3": [], "saldo_final_roteirizacao": []})
+    resposta.setdefault("auditoria_serializacao", {})
+    resposta.setdefault("auditoria_m7", {})
+    resposta.setdefault("logs", [])
+    return resposta
 
 
 def montar_resposta_erro(mensagem: str, tipo_erro: str = "ERRO") -> Dict[str, Any]:
@@ -105,10 +58,21 @@ def montar_resposta_erro(mensagem: str, tipo_erro: str = "ERRO") -> Dict[str, An
         "status": "erro",
         "mensagem": mensagem,
         "tipo_erro": tipo_erro,
-        "resumo": {},
-        "manifestos_fechados": [],
-        "manifestos_compostos": [],
-        "nao_roteirizados": [],
+        "pipeline_real_ate": "ERRO",
+        "modo_resposta": "auditoria_m7_sequenciamento_entregas",
+        "resposta_truncada": False,
+        "resumo_execucao": {},
+        "resumo_negocio": {},
+        "contexto_rodada": {},
+        "manifestos_m7": [],
+        "itens_manifestos_sequenciados_m7": [],
+        "manifestos_sequenciamento_resumo_m7": [],
+        "tentativas_sequenciamento_m7": [],
+        "diagnostico_recuperacao_coordenadas_m7": [],
+        "remanescentes": {"nao_roteirizaveis_m3": [], "saldo_final_roteirizacao": []},
+        "auditoria_serializacao": {},
+        "auditoria_m7": {},
+        "erro_tecnico": mensagem,
         "logs": [
             {
                 "modulo": "erro",
