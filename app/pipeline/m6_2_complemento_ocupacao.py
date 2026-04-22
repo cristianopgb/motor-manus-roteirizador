@@ -85,6 +85,8 @@ COLS_REMANESCENTE_OBRIGATORIAS = [
 ]
 
 CHAVES_PARADA = ["destinatario", "cidade", "uf"]
+COLS_TENTATIVAS_M6_2 = ["manifesto_id", "tipo_tentativa", "nivel_hierarquia", "aceito", "motivo"]
+COLS_MOVIMENTOS_M6_2 = ["manifesto_id", "nivel_hierarquia", "id_linha_pipeline", "aceito"]
 
 
 def _tem_schema_minimo(df: Optional[pd.DataFrame], colunas_obrigatorias: List[str]) -> bool:
@@ -140,8 +142,8 @@ def _saida_m6_2_pulada(
             "df_itens_manifestos_m6_2": df_itens.reset_index(drop=True),
             "df_remanescente_m6_2": df_remanescente.reset_index(drop=True),
             "df_remanescente_m5_original_m6_2": df_remanescente.reset_index(drop=True),
-            "df_tentativas_m6_2": pd.DataFrame(),
-            "df_movimentos_aceitos_m6_2": pd.DataFrame(),
+            "df_tentativas_m6_2": pd.DataFrame(columns=COLS_TENTATIVAS_M6_2),
+            "df_movimentos_aceitos_m6_2": pd.DataFrame(columns=COLS_MOVIMENTOS_M6_2),
         },
         "resumo_m6_2": resumo_m6_2,
     }
@@ -169,7 +171,37 @@ def executar_m6_2_complemento_ocupacao(
             tipo_roteirizacao=tipo_roteirizacao,
             caminhos_pipeline=caminhos_pipeline,
             ocupacao_alvo_perc=ocupacao_alvo_perc,
-            motivo="M6.2 pulado por ausência de manifestos base válidos.",
+            motivo="sem_manifestos_base_m6_2",
+        )
+
+    if (
+        not _tem_schema_minimo(df_estatisticas_manifestos_antes_m6, COLS_ESTATS_OBRIGATORIAS)
+        or df_estatisticas_manifestos_antes_m6.empty
+    ):
+        return _saida_m6_2_pulada(
+            df_manifestos_base_m6=df_manifestos_base_m6,
+            df_itens_manifestos_base_m6=df_itens_manifestos_base_m6,
+            df_remanescente_m5_4=df_remanescente_m5_4,
+            data_base_roteirizacao=data_base_roteirizacao,
+            tipo_roteirizacao=tipo_roteirizacao,
+            caminhos_pipeline=caminhos_pipeline,
+            ocupacao_alvo_perc=ocupacao_alvo_perc,
+            motivo="sem_estatisticas_manifestos_m6_2",
+        )
+
+    if (
+        not _tem_schema_minimo(df_itens_manifestos_base_m6, COLS_ITENS_OBRIGATORIAS)
+        or df_itens_manifestos_base_m6.empty
+    ):
+        return _saida_m6_2_pulada(
+            df_manifestos_base_m6=df_manifestos_base_m6,
+            df_itens_manifestos_base_m6=df_itens_manifestos_base_m6,
+            df_remanescente_m5_4=df_remanescente_m5_4,
+            data_base_roteirizacao=data_base_roteirizacao,
+            tipo_roteirizacao=tipo_roteirizacao,
+            caminhos_pipeline=caminhos_pipeline,
+            ocupacao_alvo_perc=ocupacao_alvo_perc,
+            motivo="sem_itens_manifestados_base_m6_2",
         )
 
     df_manifestos = _normalizar_manifestos(df_manifestos_base_m6)

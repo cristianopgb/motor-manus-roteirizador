@@ -128,6 +128,12 @@ def _tem_schema_minimo(df: Any, colunas_obrigatorias: List[str]) -> bool:
     return all(c in df.columns for c in colunas_obrigatorias)
 
 
+def _copiar_ou_vazio(df: Any, colunas: List[str] | None = None) -> pd.DataFrame:
+    if isinstance(df, pd.DataFrame):
+        return df.copy()
+    return pd.DataFrame(columns=colunas or [])
+
+
 def _executar_m0_adapter(contexto: PipelineContext) -> Dict[str, Any]:
     inventario = {
         "rodada_id": contexto.rodada_id,
@@ -410,14 +416,35 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # M5.2
     # =========================================================================================
     t0 = _agora()
-    outputs_m5_2, meta_m5_2 = executar_m5_2_composicao_cidades(
-        df_saldo_elegivel_composicao_m5_1=df_saldo_elegivel_composicao_m5_1,
-        df_perfis_elegiveis_por_cidade_m5_1=df_perfis_elegiveis_por_cidade_m5_1,
-        rodada_id=contexto.rodada_id,
-        data_base_roteirizacao=contexto.data_base,
-        tipo_roteirizacao=contexto.tipo_roteirizacao,
-        caminhos_pipeline=contexto.caminhos_pipeline,
-    )
+    m5_2_tem_saldo = isinstance(df_saldo_elegivel_composicao_m5_1, pd.DataFrame) and not df_saldo_elegivel_composicao_m5_1.empty
+    m5_2_tem_perfis = isinstance(df_perfis_elegiveis_por_cidade_m5_1, pd.DataFrame) and not df_perfis_elegiveis_por_cidade_m5_1.empty
+    if m5_2_tem_saldo and m5_2_tem_perfis:
+        outputs_m5_2, meta_m5_2 = executar_m5_2_composicao_cidades(
+            df_saldo_elegivel_composicao_m5_1=df_saldo_elegivel_composicao_m5_1,
+            df_perfis_elegiveis_por_cidade_m5_1=df_perfis_elegiveis_por_cidade_m5_1,
+            rodada_id=contexto.rodada_id,
+            data_base_roteirizacao=contexto.data_base,
+            tipo_roteirizacao=contexto.tipo_roteirizacao,
+            caminhos_pipeline=contexto.caminhos_pipeline,
+        )
+    else:
+        motivo_pulo = "sem_saldo_elegivel_m5_2" if not m5_2_tem_saldo else "sem_perfis_elegiveis_m5_2"
+        outputs_m5_2 = {
+            "df_premanifestos_m5_2": pd.DataFrame(columns=["manifesto_id", "tipo_manifesto"]),
+            "df_itens_premanifestos_m5_2": pd.DataFrame(columns=_copiar_ou_vazio(df_saldo_elegivel_composicao_m5_1).columns.tolist()),
+            "df_remanescente_m5_2": _copiar_ou_vazio(df_saldo_elegivel_composicao_m5_1),
+            "df_tentativas_m5_2": pd.DataFrame(columns=["resultado", "motivo"]),
+        }
+        meta_m5_2 = {
+            "resumo_m5_2": {
+                "modulo": "M5.2",
+                "etapa_pulada": True,
+                "motivo_etapa_pulada": motivo_pulo,
+                "linhas_entrada_m5_2": _safe_len(df_saldo_elegivel_composicao_m5_1),
+                "linhas_saida_m5_2": 0,
+                "remanescente_preservado_m5_2": _safe_len(df_saldo_elegivel_composicao_m5_1),
+            }
+        }
     tempo_m5_2 = _duracao_ms(t0)
     metricas_tempo["m5_2_composicao_cidades_ms"] = tempo_m5_2
 
@@ -430,8 +457,8 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     logs.append(
         _log(
             modulo="m5_2_composicao_cidades",
-            status="ok",
-            mensagem="M5.2 executado com sucesso",
+            status="ok" if m5_2_tem_saldo and m5_2_tem_perfis else "ignorado",
+            mensagem="M5.2 executado com sucesso" if m5_2_tem_saldo and m5_2_tem_perfis else "M5.2 pulado por ausência de entrada válida",
             quantidade_entrada=_safe_len(df_saldo_elegivel_composicao_m5_1),
             quantidade_saida=_safe_len(df_itens_premanifestos_m5_2),
             tempo_ms=tempo_m5_2,
@@ -481,14 +508,26 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # M5.3B
     # =========================================================================================
     t0 = _agora()
-    outputs_m5_3b, meta_m5_3b = executar_m5_3_composicao_subregioes(
-        df_saldo_elegivel_composicao_m5_3=df_saldo_elegivel_composicao_m5_3,
-        df_perfis_elegiveis_por_subregiao_m5_3=df_perfis_elegiveis_por_subregiao_m5_3,
-        rodada_id=contexto.rodada_id,
-        data_base_roteirizacao=contexto.data_base,
-        tipo_roteirizacao=contexto.tipo_roteirizacao,
-        caminhos_pipeline=contexto.caminhos_pipeline,
-    )
+    m5_3b_tem_saldo = isinstance(df_saldo_elegivel_composicao_m5_3, pd.DataFrame) and not df_saldo_elegivel_composicao_m5_3.empty
+    m5_3b_tem_perfis = isinstance(df_perfis_elegiveis_por_subregiao_m5_3, pd.DataFrame) and not df_perfis_elegiveis_por_subregiao_m5_3.empty
+    if m5_3b_tem_saldo and m5_3b_tem_perfis:
+        outputs_m5_3b, meta_m5_3b = executar_m5_3_composicao_subregioes(
+            df_saldo_elegivel_composicao_m5_3=df_saldo_elegivel_composicao_m5_3,
+            df_perfis_elegiveis_por_subregiao_m5_3=df_perfis_elegiveis_por_subregiao_m5_3,
+            rodada_id=contexto.rodada_id,
+            data_base_roteirizacao=contexto.data_base,
+            tipo_roteirizacao=contexto.tipo_roteirizacao,
+            caminhos_pipeline=contexto.caminhos_pipeline,
+        )
+    else:
+        motivo_pulo = "sem_saldo_elegivel_m5_3b" if not m5_3b_tem_saldo else "sem_perfis_elegiveis_m5_3b"
+        outputs_m5_3b = {
+            "df_premanifestos_m5_3": pd.DataFrame(columns=["manifesto_id", "tipo_manifesto"]),
+            "df_itens_premanifestos_m5_3": pd.DataFrame(columns=_copiar_ou_vazio(df_saldo_elegivel_composicao_m5_3).columns.tolist()),
+            "df_tentativas_m5_3": pd.DataFrame(columns=["resultado", "motivo"]),
+            "df_remanescente_m5_3": _copiar_ou_vazio(df_saldo_elegivel_composicao_m5_3),
+        }
+        meta_m5_3b = {"resumo_m5_3b": {"modulo": "M5.3B", "etapa_pulada": True, "motivo_etapa_pulada": motivo_pulo, "linhas_entrada_m5_3": _safe_len(df_saldo_elegivel_composicao_m5_3), "linhas_saida_m5_3": 0, "remanescente_preservado_m5_3": _safe_len(df_saldo_elegivel_composicao_m5_3)}}
     tempo_m5_3b = _duracao_ms(t0)
     metricas_tempo["m5_3b_composicao_subregioes_ms"] = tempo_m5_3b
 
@@ -501,8 +540,8 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     logs.append(
         _log(
             modulo="m5_3b_composicao_subregioes",
-            status="ok",
-            mensagem="M5.3B executado com sucesso",
+            status="ok" if m5_3b_tem_saldo and m5_3b_tem_perfis else "ignorado",
+            mensagem="M5.3B executado com sucesso" if m5_3b_tem_saldo and m5_3b_tem_perfis else "M5.3B pulado por ausência de entrada válida",
             quantidade_entrada=_safe_len(df_saldo_elegivel_composicao_m5_3),
             quantidade_saida=_safe_len(df_itens_premanifestos_m5_3),
             tempo_ms=tempo_m5_3b,
@@ -552,14 +591,26 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # M5.4B
     # =========================================================================================
     t0 = _agora()
-    outputs_m5_4b, meta_m5_4b = executar_m5_4b_composicao_mesorregioes(
-        df_saldo_elegivel_composicao_m5_4=df_saldo_elegivel_composicao_m5_4,
-        df_perfis_elegiveis_por_mesorregiao_m5_4=df_perfis_elegiveis_por_mesorregiao_m5_4,
-        rodada_id=contexto.rodada_id,
-        data_base_roteirizacao=contexto.data_base,
-        tipo_roteirizacao=contexto.tipo_roteirizacao,
-        caminhos_pipeline=contexto.caminhos_pipeline,
-    )
+    m5_4b_tem_saldo = isinstance(df_saldo_elegivel_composicao_m5_4, pd.DataFrame) and not df_saldo_elegivel_composicao_m5_4.empty
+    m5_4b_tem_perfis = isinstance(df_perfis_elegiveis_por_mesorregiao_m5_4, pd.DataFrame) and not df_perfis_elegiveis_por_mesorregiao_m5_4.empty
+    if m5_4b_tem_saldo and m5_4b_tem_perfis:
+        outputs_m5_4b, meta_m5_4b = executar_m5_4b_composicao_mesorregioes(
+            df_saldo_elegivel_composicao_m5_4=df_saldo_elegivel_composicao_m5_4,
+            df_perfis_elegiveis_por_mesorregiao_m5_4=df_perfis_elegiveis_por_mesorregiao_m5_4,
+            rodada_id=contexto.rodada_id,
+            data_base_roteirizacao=contexto.data_base,
+            tipo_roteirizacao=contexto.tipo_roteirizacao,
+            caminhos_pipeline=contexto.caminhos_pipeline,
+        )
+    else:
+        motivo_pulo = "sem_saldo_elegivel_m5_4b" if not m5_4b_tem_saldo else "sem_perfis_elegiveis_m5_4b"
+        outputs_m5_4b = {
+            "df_premanifestos_m5_4": pd.DataFrame(columns=["manifesto_id", "tipo_manifesto"]),
+            "df_itens_premanifestos_m5_4": pd.DataFrame(columns=_copiar_ou_vazio(df_saldo_elegivel_composicao_m5_4).columns.tolist()),
+            "df_tentativas_m5_4": pd.DataFrame(columns=["resultado", "motivo"]),
+            "df_remanescente_m5_4": _copiar_ou_vazio(df_saldo_elegivel_composicao_m5_4),
+        }
+        meta_m5_4b = {"resumo_m5_4b": {"modulo": "M5.4B", "etapa_pulada": True, "motivo_etapa_pulada": motivo_pulo, "linhas_entrada_m5_4": _safe_len(df_saldo_elegivel_composicao_m5_4), "linhas_saida_m5_4": 0, "remanescente_preservado_m5_4": _safe_len(df_saldo_elegivel_composicao_m5_4)}}
     tempo_m5_4b = _duracao_ms(t0)
     metricas_tempo["m5_4b_composicao_mesorregioes_ms"] = tempo_m5_4b
 
@@ -572,8 +623,8 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     logs.append(
         _log(
             modulo="m5_4b_composicao_mesorregioes",
-            status="ok",
-            mensagem="M5.4B executado com sucesso",
+            status="ok" if m5_4b_tem_saldo and m5_4b_tem_perfis else "ignorado",
+            mensagem="M5.4B executado com sucesso" if m5_4b_tem_saldo and m5_4b_tem_perfis else "M5.4B pulado por ausência de entrada válida",
             quantidade_entrada=_safe_len(df_saldo_elegivel_composicao_m5_4),
             quantidade_saida=_safe_len(df_itens_premanifestos_m5_4),
             tempo_ms=tempo_m5_4b,
@@ -681,12 +732,15 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
                 "tipo_roteirizacao": contexto.tipo_roteirizacao,
                 "ocupacao_alvo_perc": 85.0,
                 "etapa_pulada": True,
-                "motivo_etapa_pulada": "M6.2 ignorado: não há manifestos base válidos para complemento de ocupação",
+                "motivo_etapa_pulada": "sem_manifestos_base_m6_2",
                 "manifestos_base_total_m6_1": _safe_len(df_manifestos_base_m6),
                 "itens_manifestos_base_total_m6_1": _safe_len(df_itens_manifestos_base_m6),
                 "remanescente_m5_original_total": _safe_len(df_remanescente_m5_4),
                 "movimentos_aceitos_m6_2": 0,
                 "tentativas_total_m6_2": 0,
+                "linhas_entrada_m6_2": _safe_len(df_manifestos_base_m6),
+                "linhas_saida_m6_2": 0,
+                "remanescente_preservado_m6_2": _safe_len(df_remanescente_m5_4),
                 "caminhos_pipeline": contexto.caminhos_pipeline or {},
             },
         }
@@ -744,22 +798,24 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         mensagem_log_m7 = "M7 executado com sucesso"
     else:
         outputs_m7 = {
-            "df_manifestos_m7": df_manifestos_m6_2.copy() if isinstance(df_manifestos_m6_2, pd.DataFrame) else pd.DataFrame(),
-            "df_itens_manifestos_sequenciados_m7": df_itens_manifestos_m6_2.copy() if isinstance(df_itens_manifestos_m6_2, pd.DataFrame) else pd.DataFrame(),
-            "df_manifestos_sequenciamento_resumo_m7": pd.DataFrame(),
-            "df_tentativas_sequenciamento_m7": pd.DataFrame(),
-            "df_diagnostico_recuperacao_coordenadas_m7": pd.DataFrame(),
+            "df_manifestos_m7": df_manifestos_m6_2.copy() if isinstance(df_manifestos_m6_2, pd.DataFrame) else pd.DataFrame(columns=["manifesto_id"]),
+            "df_itens_manifestos_sequenciados_m7": df_itens_manifestos_m6_2.copy() if isinstance(df_itens_manifestos_m6_2, pd.DataFrame) else pd.DataFrame(columns=["manifesto_id", "id_linha_pipeline"]),
+            "df_manifestos_sequenciamento_resumo_m7": pd.DataFrame(columns=["manifesto_id", "status_sequenciamento_m7"]),
+            "df_tentativas_sequenciamento_m7": pd.DataFrame(columns=["manifesto_id", "resultado", "motivo"]),
+            "df_diagnostico_recuperacao_coordenadas_m7": pd.DataFrame(columns=["indicador", "valor"]),
         }
         meta_m7 = {
             "resumo_m7": {
                 "modulo": "M7",
                 "etapa_pulada": True,
-                "motivo_etapa_pulada": "M7 ignorado: não há manifestos com itens após o M6.2",
+                "motivo_etapa_pulada": "sem_manifestos_para_sequenciamento_m7",
+                "linhas_entrada_m7": _safe_len(df_itens_manifestos_m6_2),
+                "linhas_saida_m7": 0,
             },
             "auditoria_m7": {},
         }
         status_log_m7 = "ignorado"
-        mensagem_log_m7 = "M7 ignorado: não há manifestos com itens após o M6.2"
+        mensagem_log_m7 = "M7 pulado por ausência de manifestos/itens para sequenciamento"
     tempo_m7 = _duracao_ms(t0)
     metricas_tempo["m7_sequenciamento_entregas_ms"] = tempo_m7
 
