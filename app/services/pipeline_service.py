@@ -162,7 +162,7 @@ def _executar_m0_adapter(contexto: PipelineContext) -> Dict[str, Any]:
     }
 
 
-def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
+def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     inicio_total = _agora()
     logs: List[Dict[str, Any]] = []
     metricas_tempo: Dict[str, float] = {}
@@ -857,7 +857,9 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     manifestos_sequenciamento_resumo_m7 = _serializar_dataframe_para_records(df_manifestos_sequenciamento_resumo_m7, limit=None)
     tentativas_sequenciamento_m7 = _serializar_dataframe_para_records(df_tentativas_sequenciamento_m7, limit=None)
     diagnostico_recuperacao_coordenadas_m7 = _serializar_dataframe_para_records(df_diagnostico_recuperacao_coordenadas_m7, limit=None)
-    nao_roteirizados_m6_2 = _serializar_dataframe_para_records(df_remanescente_m6_2, limit=None)
+    saldo_final_roteirizacao = _serializar_dataframe_para_records(df_remanescente_m6_2, limit=None)
+    nao_roteirizados_m6_2 = saldo_final_roteirizacao
+    nao_roteirizaveis_m3 = []
 
     manifestos_fechados = []
     manifestos_compostos = []
@@ -874,6 +876,10 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
 
     tempo_total = _duracao_ms(inicio_total)
     metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
+    print("[RESPONSE] total manifestos_m7 serializados:", len(manifestos_m7))
+    print("[RESPONSE] total itens_manifestos_sequenciados_m7 serializados:", len(itens_manifestos_sequenciados_m7))
+    print("[RESPONSE] total manifestos_sequenciamento_resumo_m7 serializados:", len(manifestos_sequenciamento_resumo_m7))
+    print("[RESPONSE] total remanescentes saldo_final_roteirizacao:", len(saldo_final_roteirizacao))
 
     resposta: Dict[str, Any] = {
         "status": "ok",
@@ -948,6 +954,10 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         "manifestos_sequenciamento_resumo_m7": manifestos_sequenciamento_resumo_m7,
         "tentativas_sequenciamento_m7": tentativas_sequenciamento_m7,
         "diagnostico_recuperacao_coordenadas_m7": diagnostico_recuperacao_coordenadas_m7,
+        "remanescentes": {
+            "nao_roteirizaveis_m3": nao_roteirizaveis_m3,
+            "saldo_final_roteirizacao": saldo_final_roteirizacao,
+        },
         "auditoria_serializacao": {
             "manifestos_m7_total": _safe_len(df_manifestos_m7),
             "manifestos_m7_retornado": len(manifestos_m7),
@@ -959,6 +969,10 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             "tentativas_sequenciamento_m7_retornado": len(tentativas_sequenciamento_m7),
             "diagnostico_recuperacao_coordenadas_m7_total": _safe_len(df_diagnostico_recuperacao_coordenadas_m7),
             "diagnostico_recuperacao_coordenadas_m7_retornado": len(diagnostico_recuperacao_coordenadas_m7),
+            "remanescentes_nao_roteirizaveis_m3_total": 0,
+            "remanescentes_nao_roteirizaveis_m3_retornado": len(nao_roteirizaveis_m3),
+            "remanescentes_saldo_final_roteirizacao_total": _safe_len(df_remanescente_m6_2),
+            "remanescentes_saldo_final_roteirizacao_retornado": len(saldo_final_roteirizacao),
         },
         "auditoria_m7": auditoria_m7,
         "logs": logs,
@@ -1007,3 +1021,67 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         }
 
     return resposta
+
+
+def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
+    try:
+        return _executar_pipeline_core(payload)
+    except Exception as exc:
+        erro_tecnico = str(exc)
+        logs = [
+            _log(
+                modulo="pipeline_service",
+                status="erro",
+                mensagem="Falha durante execução do pipeline",
+                extra={"erro_tecnico": erro_tecnico},
+            )
+        ]
+        return {
+            "status": "erro",
+            "mensagem": "Falha ao executar pipeline de roteirização.",
+            "pipeline_real_ate": "ERRO",
+            "modo_resposta": "auditoria_m7_sequenciamento_entregas",
+            "resposta_truncada": False,
+            "resumo_execucao": {
+                "rodada_id": getattr(payload, "rodada_id", None),
+                "upload_id": getattr(payload, "upload_id", None),
+                "usuario_id": getattr(payload, "usuario_id", None),
+                "filial_id": getattr(payload, "filial_id", None),
+                "tipo_roteirizacao": getattr(payload, "tipo_roteirizacao", None),
+                "data_base_roteirizacao": getattr(payload, "data_base_roteirizacao", None),
+                "tempos_ms": {},
+            },
+            "resumo_negocio": {},
+            "contexto_rodada": {
+                "filial": getattr(payload, "filial", None),
+                "parametros_rodada": {},
+            },
+            "manifestos_m7": [],
+            "itens_manifestos_sequenciados_m7": [],
+            "manifestos_sequenciamento_resumo_m7": [],
+            "tentativas_sequenciamento_m7": [],
+            "diagnostico_recuperacao_coordenadas_m7": [],
+            "remanescentes": {
+                "nao_roteirizaveis_m3": [],
+                "saldo_final_roteirizacao": [],
+            },
+            "auditoria_serializacao": {
+                "manifestos_m7_total": 0,
+                "manifestos_m7_retornado": 0,
+                "itens_manifestos_sequenciados_m7_total": 0,
+                "itens_manifestos_sequenciados_m7_retornado": 0,
+                "manifestos_sequenciamento_resumo_m7_total": 0,
+                "manifestos_sequenciamento_resumo_m7_retornado": 0,
+                "tentativas_sequenciamento_m7_total": 0,
+                "tentativas_sequenciamento_m7_retornado": 0,
+                "diagnostico_recuperacao_coordenadas_m7_total": 0,
+                "diagnostico_recuperacao_coordenadas_m7_retornado": 0,
+                "remanescentes_nao_roteirizaveis_m3_total": 0,
+                "remanescentes_nao_roteirizaveis_m3_retornado": 0,
+                "remanescentes_saldo_final_roteirizacao_total": 0,
+                "remanescentes_saldo_final_roteirizacao_retornado": 0,
+            },
+            "auditoria_m7": {},
+            "erro_tecnico": erro_tecnico,
+            "logs": logs,
+        }
