@@ -26,7 +26,7 @@ from app.services.payload_service import PipelineContext, normalizar_payload_par
 from app.utils.json_safe import sanitizar_json_safe
 
 PIPELINE_FLAGS = {
-    "executar_m4": False,
+    "executar_m4": True,
     "executar_m5_1": False,
     "executar_m5_2": False,
     "executar_m5_3a": False,
@@ -510,6 +510,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # priorizar sempre os DATAFRAMES OFICIAIS DE ITENS de cada etapa (não apenas resumos/manifestos agregados),
     # mantendo o histórico linha a linha do dataset operacional.
     t0 = _agora()
+    print(f"[M4] executando M4 com input oficial do bloco 4 linhas={_safe_len(df_input_oficial_bloco_4)}")
     outputs_m4, meta_m4 = executar_m4_manifestos_fechados(
         df_input_oficial_bloco_4=df_input_oficial_bloco_4,
         df_veiculos_tratados=df_veiculos_tratados,
@@ -523,21 +524,32 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     metricas_tempo["m4_manifestos_fechados_ms"] = tempo_m4
 
     resumo_m4 = meta_m4["resumo_m4"]
-    df_remanescente_roteirizavel_bloco_4 = outputs_m4["df_remanescente_roteirizavel_bloco_4"]
 
-    df_manifestos_m4 = outputs_m4.get("df_manifestos_fechados_bloco_4")
+    df_manifestos_m4 = outputs_m4.get("df_manifestos_m4")
     if df_manifestos_m4 is None or not isinstance(df_manifestos_m4, pd.DataFrame):
-        df_manifestos_m4 = outputs_m4.get("df_manifestos_m4")
+        df_manifestos_m4 = outputs_m4.get("df_manifestos_fechados_bloco_4")
     if df_manifestos_m4 is None or not isinstance(df_manifestos_m4, pd.DataFrame):
         df_manifestos_m4 = pd.DataFrame()
 
-    df_itens_manifestados_m4 = outputs_m4.get("df_itens_manifestos_fechados_bloco_4")
-    if df_itens_manifestados_m4 is None or not isinstance(df_itens_manifestados_m4, pd.DataFrame):
-        df_itens_manifestados_m4 = outputs_m4.get("df_itens_manifestados_bloco_4")
-    if df_itens_manifestados_m4 is None or not isinstance(df_itens_manifestados_m4, pd.DataFrame):
-        df_itens_manifestados_m4 = outputs_m4.get("df_itens_manifestados_m4")
-    if df_itens_manifestados_m4 is None or not isinstance(df_itens_manifestados_m4, pd.DataFrame):
-        df_itens_manifestados_m4 = pd.DataFrame()
+    df_itens_m4 = outputs_m4.get("df_itens_m4")
+    if df_itens_m4 is None or not isinstance(df_itens_m4, pd.DataFrame):
+        df_itens_m4 = outputs_m4.get("df_itens_manifestos_fechados_bloco_4")
+    if df_itens_m4 is None or not isinstance(df_itens_m4, pd.DataFrame):
+        df_itens_m4 = outputs_m4.get("df_itens_manifestados_bloco_4")
+    if df_itens_m4 is None or not isinstance(df_itens_m4, pd.DataFrame):
+        df_itens_m4 = pd.DataFrame()
+
+    df_remanescente_m4 = outputs_m4.get("df_remanescente_m4")
+    if df_remanescente_m4 is None or not isinstance(df_remanescente_m4, pd.DataFrame):
+        df_remanescente_m4 = outputs_m4.get("df_remanescente_roteirizavel_bloco_4")
+    if df_remanescente_m4 is None or not isinstance(df_remanescente_m4, pd.DataFrame):
+        df_remanescente_m4 = pd.DataFrame()
+    df_remanescente_roteirizavel_bloco_4 = df_remanescente_m4
+    df_itens_manifestados_m4 = df_itens_m4
+
+    print(f"[M4] df_manifestos_m4 linhas={_safe_len(df_manifestos_m4)}")
+    print(f"[M4] df_itens_m4 linhas={_safe_len(df_itens_m4)}")
+    print(f"[M4] df_remanescente_m4 linhas={_safe_len(df_remanescente_m4)}")
 
     logs.append(
         _log(
@@ -545,14 +557,117 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             status="ok",
             mensagem="M4 executado com sucesso",
             quantidade_entrada=_safe_len(df_input_oficial_bloco_4),
-            quantidade_saida=_safe_len(df_remanescente_roteirizavel_bloco_4),
+            quantidade_saida=_safe_len(df_remanescente_m4),
             tempo_ms=tempo_m4,
             extra={
                 **resumo_m4,
-                "total_remanescente_global_m4": _safe_len(df_remanescente_roteirizavel_bloco_4),
+                "total_manifestos_m4": _safe_len(df_manifestos_m4),
+                "total_itens_manifestados_m4": _safe_len(df_itens_m4),
+                "total_remanescente_global_m4": _safe_len(df_remanescente_m4),
             },
         )
     )
+    total_m4_manifestos = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m4_manifestos_fechados",
+        ordem_modulo=6,
+        df_etapa=df_manifestos_m4,
+        snapshot_nome="m4_manifestos",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m4_manifestos_fechados"] = auditoria_por_modulo.get("m4_manifestos_fechados", 0) + total_m4_manifestos
+    auditoria_por_snapshot["m4_manifestos"] = auditoria_por_snapshot.get("m4_manifestos", 0) + total_m4_manifestos
+    print(f"[AUDITORIA FLAT] snapshot=m4_manifestos linhas={total_m4_manifestos}")
+
+    total_m4_itens = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m4_manifestos_fechados",
+        ordem_modulo=6,
+        df_etapa=df_itens_m4,
+        snapshot_nome="m4_itens",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m4_manifestos_fechados"] = auditoria_por_modulo.get("m4_manifestos_fechados", 0) + total_m4_itens
+    auditoria_por_snapshot["m4_itens"] = auditoria_por_snapshot.get("m4_itens", 0) + total_m4_itens
+    print(f"[AUDITORIA FLAT] snapshot=m4_itens linhas={total_m4_itens}")
+
+    total_m4_remanescente = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m4_manifestos_fechados",
+        ordem_modulo=6,
+        df_etapa=df_remanescente_m4,
+        snapshot_nome="m4_remanescente",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m4_manifestos_fechados"] = auditoria_por_modulo.get("m4_manifestos_fechados", 0) + total_m4_remanescente
+    auditoria_por_snapshot["m4_remanescente"] = auditoria_por_snapshot.get("m4_remanescente", 0) + total_m4_remanescente
+    print(f"[AUDITORIA FLAT] snapshot=m4_remanescente linhas={total_m4_remanescente}")
+
+    if not PIPELINE_FLAGS["executar_m5_1"]:
+        tempo_total = _duracao_ms(inicio_total)
+        metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
+        print(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
+        return {
+            "status": "ok",
+            "mensagem": "Execução encerrada propositalmente após o M4 para auditoria operacional desta etapa.",
+            "pipeline_real_ate": "M4",
+            "modo_resposta": "auditoria_m4_modular",
+            "resposta_truncada": False,
+            "teste_id_auditoria": teste_id_auditoria,
+            "auditoria_modular": {
+                "teste_id_auditoria": teste_id_auditoria,
+                "modulos": [{"modulo": modulo, "linhas_gravadas": linhas} for modulo, linhas in auditoria_por_modulo.items()],
+                "snapshots": [{"snapshot_nome": snapshot_nome, "linhas_gravadas": linhas} for snapshot_nome, linhas in auditoria_por_snapshot.items()],
+                "colunas_persistidas": sorted(list(auditoria_flat_rastreamento.get("colunas_persistidas", set()))),
+            },
+            "resumo_execucao": {
+                "rodada_id": contexto.rodada_id,
+                "upload_id": contexto.upload_id,
+                "usuario_id": contexto.usuario_id,
+                "filial_id": contexto.filial_id,
+                "tipo_roteirizacao": contexto.tipo_roteirizacao,
+                "data_base_roteirizacao": contexto.data_base.isoformat(),
+                "tempos_ms": metricas_tempo,
+            },
+            "resumo_negocio": {
+                "total_carteira": _safe_len(contexto.df_carteira_raw),
+                "total_enriquecida_m2": _safe_len(df_carteira_enriquecida),
+                "total_triagem_m3": _safe_len(df_carteira_triagem),
+                "total_roteirizavel_m3": _safe_len(df_carteira_roteirizavel),
+                "total_agendamento_futuro_m3": _safe_len(df_carteira_agendamento_futuro),
+                "total_agendas_vencidas_m3": _safe_len(df_carteira_agendas_vencidas),
+                "total_input_bloco_4": _safe_len(df_input_oficial_bloco_4),
+                "total_entrada_bloco_4": int(resumo_m4.get("roteirizavel_entrada_m4", _safe_len(df_input_oficial_bloco_4))),
+                "dedicados_encontrados_m4": int(meta_m4.get("metricas_m4", {}).get("contadores_m4", {}).get("qtd_manifestos_exclusivos", 0)),
+                "total_manifestos_m4": int(resumo_m4.get("manifestos_fechados_gerados_m4", _safe_len(df_manifestos_m4))),
+                "total_itens_manifestados_m4": int(resumo_m4.get("itens_manifestados_m4", _safe_len(df_itens_m4))),
+                "total_remanescente_m4": int(resumo_m4.get("remanescente_roteirizavel_m4", _safe_len(df_remanescente_m4))),
+                "resumo_m3": resumo_m3,
+                "resumo_m31": resumo_m31,
+            },
+            "resumo_m4": {
+                **resumo_m4,
+                "total_entrada": int(resumo_m4.get("roteirizavel_entrada_m4", _safe_len(df_input_oficial_bloco_4))),
+                "dedicados_encontrados": int(meta_m4.get("metricas_m4", {}).get("contadores_m4", {}).get("qtd_manifestos_exclusivos", 0)),
+                "manifestos_fechados": int(resumo_m4.get("manifestos_fechados_gerados_m4", _safe_len(df_manifestos_m4))),
+                "itens_manifestados": int(resumo_m4.get("itens_manifestados_m4", _safe_len(df_itens_m4))),
+                "remanescente": int(resumo_m4.get("remanescente_roteirizavel_m4", _safe_len(df_remanescente_m4))),
+            },
+            "contexto_rodada": {
+                "filial": contexto.filial,
+                "parametros_rodada": contexto.parametros_rodada,
+            },
+            "logs": logs,
+        }
 
     # =========================================================================================
     # M5.1
