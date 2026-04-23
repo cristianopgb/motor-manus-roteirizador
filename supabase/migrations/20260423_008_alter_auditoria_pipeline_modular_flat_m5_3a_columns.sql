@@ -1,0 +1,13 @@
+alter table public.auditoria_pipeline_modular add column if not exists subregiao text;
+alter table public.auditoria_pipeline_modular add column if not exists qtd_cidades_subregiao text;
+alter table public.auditoria_pipeline_modular add column if not exists perfil text;
+alter table public.auditoria_pipeline_modular add column if not exists tipo text;
+alter table public.auditoria_pipeline_modular add column if not exists capacidade_peso_kg text;
+alter table public.auditoria_pipeline_modular add column if not exists capacidade_vol_m3 text;
+alter table public.auditoria_pipeline_modular add column if not exists max_entregas text;
+alter table public.auditoria_pipeline_modular add column if not exists max_km_distancia text;
+alter table public.auditoria_pipeline_modular add column if not exists ocupacao_minima_perc text;
+alter table public.auditoria_pipeline_modular add column if not exists ocupacao_maxima_perc text;
+alter table public.auditoria_pipeline_modular add column if not exists ocupacao_calculada_perc text;
+alter table public.auditoria_pipeline_modular add column if not exists qtd_perfis_elegiveis text;
+alter table public.auditoria_pipeline_modular add column if not exists qtd_perfis_descartados text;
