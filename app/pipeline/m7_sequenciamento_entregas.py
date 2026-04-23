@@ -68,6 +68,20 @@ def _to_bool(value: Any) -> bool:
     return txt in {"1", "true", "sim", "s", "yes", "y", "verdadeiro"}
 
 
+def _coord_float_intervalo(value: Any, eixo: str) -> float:
+    if value is None or pd.isna(value):
+        return np.nan
+    try:
+        numero = float(value)
+    except Exception:
+        return np.nan
+    if eixo == "latitude" and not (-90.0 <= numero <= 90.0):
+        return np.nan
+    if eixo == "longitude" and not (-180.0 <= numero <= 180.0):
+        return np.nan
+    return numero
+
+
 def _resolver_coluna_existente(
     df: pd.DataFrame,
     candidatos: List[str],
@@ -364,10 +378,10 @@ def _normalizar_itens(df_itens_m6_2: pd.DataFrame) -> pd.DataFrame:
         pd.to_numeric(out["peso_kg"], errors="coerce")
     )
 
-    out["latitude_filial_m7"] = out[col_lat_filial]
-    out["longitude_filial_m7"] = out[col_lon_filial]
-    out["latitude_dest_m7"] = out[col_lat_dest]
-    out["longitude_dest_m7"] = out[col_lon_dest]
+    out["latitude_filial_m7"] = out[col_lat_filial].apply(lambda v: _coord_float_intervalo(v, "latitude"))
+    out["longitude_filial_m7"] = out[col_lon_filial].apply(lambda v: _coord_float_intervalo(v, "longitude"))
+    out["latitude_dest_m7"] = out[col_lat_dest].apply(lambda v: _coord_float_intervalo(v, "latitude"))
+    out["longitude_dest_m7"] = out[col_lon_dest].apply(lambda v: _coord_float_intervalo(v, "longitude"))
 
     col_origem_cidade = _resolver_coluna_existente(
         out,
