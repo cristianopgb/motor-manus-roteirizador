@@ -17,6 +17,18 @@ HORAS_DIRECAO_DIA_PADRAO = 8.0
 KM_DIA_OPERACIONAL_PADRAO = VELOCIDADE_MEDIA_KM_H_PADRAO * HORAS_DIRECAO_DIA_PADRAO
 
 
+def _coordenadas_validas(lat: Any, lon: Any) -> tuple[bool, str]:
+    if pd.isna(lat) or pd.isna(lon):
+        return False, "coordenada_ausente"
+    lat_f = float(lat)
+    lon_f = float(lon)
+    if not (-90.0 <= lat_f <= 90.0):
+        return False, "latitude_fora_intervalo"
+    if not (-180.0 <= lon_f <= 180.0):
+        return False, "longitude_fora_intervalo"
+    return True, "ok"
+
+
 def executar_m2_enriquecimento(
     df_carteira_tratada: pd.DataFrame,
     df_geo_tratado: pd.DataFrame,
@@ -59,6 +71,7 @@ def executar_m2_enriquecimento(
 
     qtd_linhas_entrada = len(carteira)
 
+    # M2 consome floats já normalizados no M1 e apenas garante tipagem numérica.
     for c in [
         "latitude_filial",
         "longitude_filial",
@@ -119,13 +132,33 @@ def executar_m2_enriquecimento(
     carteira["origem_latitude"] = carteira["latitude_filial"]
     carteira["origem_longitude"] = carteira["longitude_filial"]
 
+    validacoes_geo = carteira.apply(
+        lambda row: (
+            _coordenadas_validas(row["origem_latitude"], row["origem_longitude"]),
+            _coordenadas_validas(row["latitude_destinatario"], row["longitude_destinatario"]),
+        ),
+        axis=1,
+    )
+    carteira["status_geo_m2"] = validacoes_geo.apply(
+        lambda x: "ok" if x[0][0] and x[1][0] else "coordenada_invalida"
+    )
+    carteira["motivo_geo_m2"] = validacoes_geo.apply(
+        lambda x: "ok" if x[0][0] and x[1][0] else f"origem={x[0][1]};destino={x[1][1]}"
+    )
+    for i in carteira.index[:5]:
+        print(
+            f"[VALIDACAO GEO M2] origem=({carteira.loc[i, 'origem_latitude']},{carteira.loc[i, 'origem_longitude']}) "
+            f"destino=({carteira.loc[i, 'latitude_destinatario']},{carteira.loc[i, 'longitude_destinatario']}) "
+            f"status={carteira.loc[i, 'status_geo_m2']}"
+        )
+
     carteira["distancia_km"] = carteira.apply(
         lambda row: _haversine_km(
             row["origem_latitude"],
             row["origem_longitude"],
             row["latitude_destinatario"],
             row["longitude_destinatario"],
-        ),
+        ) if row["status_geo_m2"] == "ok" else np.nan,
         axis=1,
     )
 
@@ -288,6 +321,7 @@ def executar_m2_enriquecimento(
         "ok",
         "pendencia_geo",
     )
+    carteira.loc[carteira["status_geo_m2"] != "ok", "status_geo"] = "coordenada_invalida"
 
     carteira["perfil_veiculo_referencia"] = carteira["distancia_rodoviaria_est_km"].apply(
         _classificar_perfil_veiculo_referencia

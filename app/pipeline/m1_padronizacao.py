@@ -149,6 +149,173 @@ def converter_coordenada(serie: pd.Series) -> pd.Series:
     return s.apply(_coord)
 
 
+
+
+def _is_empty_value(valor: Any) -> bool:
+    if valor is None:
+        return True
+    try:
+        resultado_isna = pd.isna(valor)
+        if isinstance(resultado_isna, (bool, np.bool_)) and bool(resultado_isna):
+            return True
+    except Exception:
+        pass
+    return str(valor).strip() == ""
+
+
+def _normalizar_decimal_geral(valor: Any) -> Optional[float]:
+    if _is_empty_value(valor):
+        return None
+
+    if isinstance(valor, (int, float, np.integer, np.floating)):
+        return float(valor)
+
+    texto = str(valor).strip().replace(" ", "")
+    texto = texto.replace("R$", "")
+
+    if "." in texto and "," in texto:
+        if texto.rfind(",") > texto.rfind("."):
+            texto = texto.replace(".", "").replace(",", ".")
+        else:
+            texto = texto.replace(",", "")
+    elif "," in texto:
+        texto = texto.replace(".", "").replace(",", ".")
+
+    try:
+        return float(texto)
+    except Exception:
+        return None
+
+
+def _normalizar_lat_lon(valor: Any, eixo: str = "") -> Optional[float]:
+    if _is_empty_value(valor):
+        return None
+
+    if isinstance(valor, (int, float, np.integer, np.floating)):
+        normalizado = float(valor)
+    else:
+        texto = str(valor).strip().replace(" ", "")
+        # Coordenada nunca usa separador de milhar removendo ponto.
+        if "," in texto and "." not in texto:
+            texto = texto.replace(",", ".")
+        elif "," in texto and "." in texto:
+            # Caso raro e ambíguo: considera inválido para evitar distorção.
+            return None
+        try:
+            normalizado = float(texto)
+        except Exception:
+            return None
+
+    eixo_l = str(eixo).lower()
+    if eixo_l == "latitude" and not (-90.0 <= normalizado <= 90.0):
+        return None
+    if eixo_l == "longitude" and not (-180.0 <= normalizado <= 180.0):
+        return None
+
+    return normalizado
+
+
+def _normalizar_data_iso(valor: Any) -> Any:
+    if _is_empty_value(valor):
+        return pd.NaT
+
+    if isinstance(valor, pd.Timestamp):
+        return valor
+
+    if isinstance(valor, datetime):
+        return pd.Timestamp(valor)
+
+    texto = str(valor).strip()
+    if " " in texto and "T" not in texto and re.match(r"^\d{4}-\d{2}-\d{2} ", texto):
+        texto = texto.replace(" ", "T", 1)
+
+    try:
+        return pd.to_datetime(texto, errors="coerce", format="ISO8601")
+    except Exception:
+        return pd.NaT
+
+
+def _normalizar_data_br(valor: Any) -> Any:
+    if _is_empty_value(valor):
+        return pd.NaT
+    try:
+        return pd.to_datetime(str(valor).strip(), format="%d/%m/%Y", errors="coerce")
+    except Exception:
+        return pd.NaT
+
+
+def _normalizar_data_br_hora(valor: Any) -> Any:
+    if _is_empty_value(valor):
+        return pd.NaT
+    try:
+        return pd.to_datetime(str(valor).strip(), format="%d/%m/%Y %H:%M:%S", errors="coerce")
+    except Exception:
+        return pd.NaT
+
+
+def _normalizar_data_mista(valor: Any) -> Any:
+    if _is_empty_value(valor):
+        return pd.NaT
+
+    texto = str(valor).strip()
+
+    if "T" in texto or re.match(r"^\d{4}-\d{2}-\d{2}", texto):
+        return _normalizar_data_iso(texto)
+
+    if "/" in texto and ":" in texto:
+        return _normalizar_data_br_hora(texto)
+
+    if "/" in texto:
+        return _normalizar_data_br(texto)
+
+    return pd.NaT
+
+
+def _normalizar_serie_numerica(df: pd.DataFrame, coluna: str) -> None:
+    if coluna not in df.columns:
+        return
+    original = df[coluna].copy()
+    df[coluna] = df[coluna].apply(_normalizar_decimal_geral)
+    for i in df.index[:5]:
+        print(f"[NORMALIZACAO NUMERICA] coluna={coluna} original={original.loc[i]} normalizado={df.loc[i, coluna]}")
+
+
+def _normalizar_serie_geo(df: pd.DataFrame, coluna: str, eixo: str) -> None:
+    if coluna not in df.columns:
+        return
+    original = df[coluna].copy()
+    df[coluna] = df[coluna].apply(lambda v: _normalizar_lat_lon(v, eixo=eixo))
+    for i in df.index[:5]:
+        print(f"[NORMALIZACAO GEO] coluna={coluna} original={original.loc[i]} normalizado={df.loc[i, coluna]}")
+
+
+def _normalizar_serie_data(df: pd.DataFrame, coluna: str) -> None:
+    if coluna not in df.columns:
+        return
+    original = df[coluna].copy()
+    formatos = []
+
+    def _parse(v: Any) -> Any:
+        if _is_empty_value(v):
+            formatos.append("vazio")
+            return pd.NaT
+        txt = str(v).strip()
+        if "T" in txt or re.match(r"^\d{4}-\d{2}-\d{2}", txt):
+            formatos.append("iso")
+        elif "/" in txt and ":" in txt:
+            formatos.append("br_hora")
+        elif "/" in txt:
+            formatos.append("br")
+        else:
+            formatos.append("invalido")
+        return _normalizar_data_mista(v)
+
+    df[coluna] = df[coluna].apply(_parse)
+    for pos, i in enumerate(df.index[:5]):
+        fmt = formatos[pos] if pos < len(formatos) else "n/a"
+        print(f"[NORMALIZACAO DATA] coluna={coluna} original={original.loc[i]} normalizado={df.loc[i, coluna]} formato_detectado={fmt}")
+
+
 def _limpar_texto_data(valor: Any) -> Any:
     """
     Higieniza datas vindas do dataset REC sem alterar a regra do pipeline.
@@ -189,19 +356,7 @@ def _limpar_texto_data(valor: Any) -> Any:
 
 
 def converter_data(serie: pd.Series) -> pd.Series:
-    serie_limpa = serie.apply(_limpar_texto_data)
-
-    convertido = pd.to_datetime(serie_limpa, errors="coerce", dayfirst=True)
-
-    mask_falha = convertido.isna() & serie_limpa.notna()
-    if mask_falha.any():
-        convertido.loc[mask_falha] = pd.to_datetime(
-            serie_limpa.loc[mask_falha],
-            errors="coerce",
-            dayfirst=False
-        )
-
-    return convertido
+    return serie.apply(_normalizar_data_mista)
 
 
 def _parse_hora_flex(valor: Any) -> Optional[time]:
@@ -427,30 +582,10 @@ def _extrair_parametros_dict(parametros: pd.DataFrame) -> Dict[str, Any]:
 
 
 def _coerce_float_or_nan(valor: Any) -> float:
-    if valor is None:
+    normalizado = _normalizar_decimal_geral(valor)
+    if normalizado is None:
         return np.nan
-
-    try:
-        resultado_isna = pd.isna(valor)
-        if isinstance(resultado_isna, (bool, np.bool_)) and bool(resultado_isna):
-            return np.nan
-    except Exception:
-        pass
-
-    try:
-        texto = str(valor).strip()
-
-        if "." in texto and "," in texto:
-            if texto.rfind(",") > texto.rfind("."):
-                texto = texto.replace(".", "").replace(",", ".")
-            else:
-                texto = texto.replace(",", "")
-        elif "," in texto:
-            texto = texto.replace(",", ".")
-
-        return float(texto)
-    except Exception:
-        return np.nan
+    return float(normalizado)
 
 
 def executar_m1_padronizacao(
@@ -628,8 +763,7 @@ def executar_m1_padronizacao(
     ]
 
     for c in colunas_num:
-        if c in carteira.columns:
-            carteira[c] = converter_numerico_brasil(carteira[c])
+        _normalizar_serie_numerica(carteira, c)
 
     if "prioridade_embarque" in carteira.columns:
         prioridade_num = converter_numerico_brasil(carteira["prioridade_embarque"])
@@ -642,17 +776,24 @@ def executar_m1_padronizacao(
             prioridade_num
         )
 
-    for c in ["latitude_destinatario", "longitude_destinatario"]:
-        if c in carteira.columns:
-            carteira[c] = converter_coordenada(carteira[c])
+    for c in ["latitude", "latitude_destinatario", "latitude_filial"]:
+        _normalizar_serie_geo(carteira, c, eixo="latitude")
+    for c in ["longitude", "longitude_destinatario", "longitude_filial"]:
+        _normalizar_serie_geo(carteira, c, eixo="longitude")
 
-    for c in ["data_descarga", "data_nf", "data_leadtime", "data_agenda"]:
-        if c in carteira.columns:
-            carteira[c] = converter_data(carteira[c])
+    for c in [
+        "data_descarga",
+        "data_nf",
+        "data_leadtime",
+        "data_agenda",
+        "inicio_entrega",
+        "fim_entrega",
+    ]:
+        _normalizar_serie_data(carteira, c)
 
     for c in ["inicio_entrega", "fim_entrega"]:
         if c in carteira.columns:
-            carteira[c] = converter_hora(carteira[c])
+            carteira[c] = carteira[c].apply(_parse_hora_flex)
 
     colunas_texto = [
         "conferencia",
@@ -707,10 +848,13 @@ def executar_m1_padronizacao(
     if "peso_kg" not in carteira.columns:
         carteira["peso_kg"] = np.nan
 
+    # peso_calculado é preservado como coluna principal de cálculo.
+    # fallback permitido: usar peso_kg somente quando peso_calculado estiver ausente/nulo.
     carteira["peso_calculado"] = carteira["peso_calculado"].where(
         carteira["peso_calculado"].notna(),
         carteira["peso_kg"]
     )
+    # peso_kg sempre preservado; NUNCA recebe sobrescrita de peso_calculado.
 
     carteira["veiculo_exclusivo"] = carteira["veiculo_exclusivo_flag"]
 
@@ -732,6 +876,9 @@ def executar_m1_padronizacao(
     if "microrregiao" in geo.columns:
         geo["microrregiao"] = geo["microrregiao"].apply(normalizar_texto_basico)
 
+    _normalizar_serie_geo(geo, "latitude", eixo="latitude")
+    _normalizar_serie_geo(geo, "longitude", eixo="longitude")
+
     # --------------------------------------------------------
     # 9) TIPAGEM PARÂMETROS
     # --------------------------------------------------------
@@ -743,9 +890,30 @@ def executar_m1_padronizacao(
 
     carteira["origem_cidade"] = origem_cidade
     carteira["origem_uf"] = origem_uf
-    carteira["latitude_filial"] = _coerce_float_or_nan(origem_latitude)
-    carteira["longitude_filial"] = _coerce_float_or_nan(origem_longitude)
-    carteira["data_base_roteirizacao"] = data_base_roteirizacao
+    carteira["latitude_filial"] = _normalizar_lat_lon(origem_latitude, eixo="latitude")
+    carteira["longitude_filial"] = _normalizar_lat_lon(origem_longitude, eixo="longitude")
+    carteira["data_base_roteirizacao"] = _normalizar_data_mista(data_base_roteirizacao)
+    print(f"[BASE DATA] data_base_roteirizacao normalizada={carteira['data_base_roteirizacao'].iloc[0] if len(carteira) > 0 else pd.NaT}")
+
+    # auditoria modular flat das colunas críticas
+    if "latitude_destinatario" in carteira.columns:
+        carteira["valor_original_latitude"] = df_carteira_raw.get("latitude", df_carteira_raw.get("Latitude", np.nan))
+        carteira["valor_normalizado_latitude"] = carteira["latitude_destinatario"]
+    if "longitude_destinatario" in carteira.columns:
+        carteira["valor_original_longitude"] = df_carteira_raw.get("longitude", df_carteira_raw.get("Longitude", np.nan))
+        carteira["valor_normalizado_longitude"] = carteira["longitude_destinatario"]
+    if "peso_kg" in carteira.columns:
+        carteira["valor_original_peso_kg"] = df_carteira_raw.get("peso", df_carteira_raw.get("Peso", np.nan))
+        carteira["valor_normalizado_peso_kg"] = carteira["peso_kg"]
+    if "peso_calculado" in carteira.columns:
+        carteira["valor_original_peso_calculado"] = df_carteira_raw.get("peso_calculo", df_carteira_raw.get("Peso Calculo", np.nan))
+        carteira["valor_normalizado_peso_calculado"] = carteira["peso_calculado"]
+    if "data_agenda" in carteira.columns:
+        carteira["valor_original_data_agenda"] = df_carteira_raw.get("agendam", df_carteira_raw.get("Agendam.", np.nan))
+        carteira["valor_normalizado_data_agenda"] = carteira["data_agenda"]
+    if "data_leadtime" in carteira.columns:
+        carteira["valor_original_data_leadtime"] = df_carteira_raw.get("dle", df_carteira_raw.get("D.L.E.", np.nan))
+        carteira["valor_normalizado_data_leadtime"] = carteira["data_leadtime"]
 
     # --------------------------------------------------------
     # 10) CHAVES GEO
