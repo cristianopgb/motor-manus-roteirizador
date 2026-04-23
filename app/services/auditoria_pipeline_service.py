@@ -41,6 +41,11 @@ COLUNAS_AUDITORIA_FLAT: List[str] = [
     "perfil_veiculo_referencia", "status_geo", "origem_latitude", "origem_longitude", "status_triagem",
     "motivo_triagem", "grupo_saida", "prioridade_label", "ranking_prioridade_operacional", "flag_roteirizavel",
     "flag_agendamento_futuro", "flag_agenda_vencida", "id_linha_pipeline",
+    "manifesto_id", "tipo_manifesto", "veiculo_tipo", "veiculo_perfil", "qtd_eixos", "qtd_itens", "qtd_ctes",
+    "qtd_paradas", "base_carga_oficial", "peso_total_kg", "vol_total_m3", "km_referencia",
+    "ocupacao_oficial_perc", "capacidade_peso_kg_veiculo", "capacidade_vol_m3_veiculo", "max_entregas_veiculo",
+    "max_km_distancia_veiculo", "ocupacao_minima_perc_veiculo", "ignorar_ocupacao_minima", "origem_modulo",
+    "origem_etapa", "motivo_nao_roteirizavel", "motivo_final_remanescente_m4",
 ]
 
 
