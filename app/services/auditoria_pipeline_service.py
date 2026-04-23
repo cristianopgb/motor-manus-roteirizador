@@ -14,33 +14,34 @@ from app.utils.json_safe import sanitizar_json_safe
 SUPABASE_TIMEOUT_SECONDS = 20.0
 SUPABASE_INSERT_CHUNK_SIZE = 500
 
-COLUNAS_BASE_REFERENCIA = {
-    "id_linha_pipeline",
-    "manifesto_id",
-    "pedido_id",
-    "cliente_id",
-    "cnpj",
-    "cidade",
-    "uf",
-    "bairro",
-    "cep",
-    "latitude",
-    "longitude",
-    "peso",
-    "peso_calculo",
-    "volume",
-}
-
-PREFIXOS_CALCULADOS = (
-    "score_",
-    "dist_",
-    "km_",
-    "tempo_",
-    "flag_",
-    "calc_",
-    "capacidade_",
-    "ocupacao_",
-)
+# Colunas reais levantadas dos dataframes oficiais:
+# - payload_service (contexto.df_carteira_raw)
+# - m0_adapter (resultado_m0["df_carteira_raw"])
+# - m1_padronizacao (df_carteira_tratada)
+# - m2_enriquecimento (df_carteira_enriquecida)
+# - m3_triagem (df_carteira_triagem)
+# - m3_1_validacao_fronteira (df_input_oficial_bloco_4)
+COLUNAS_AUDITORIA_FLAT: List[str] = [
+    "Filial_R", "Romane", "Filial_D", "Serie", "Nro_Doc", "Data_Des", "Data_NF", "DLE", "Agendam", "Palet",
+    "Conf", "Peso", "Vlr_Merc", "Qtd", "Peso_Cub", "Peso_Calculo", "Classif", "Tomad", "Destin", "Bairro",
+    "Cidad", "UF", "NF_Serie", "Tipo_Ca", "Tipo_Carga", "Qtd_NF", "Regiao", "Mesoregiao", "Sub_Regiao",
+    "Ocorrencias_NF", "Remetente", "Observacao", "Ref_Cliente", "Cidade_Dest", "Agenda", "Ultima_Ocorrencia",
+    "Status_R", "Latitude", "Longitude", "Prioridade", "Restricao_Veiculo", "Carro_Dedicado", "Inicio_Ent",
+    "Fim_En", "filial_roteirizacao", "romaneio", "filial_origem", "serie", "nro_documento", "data_descarga",
+    "data_nf", "data_leadtime", "data_agenda", "qtd_pallet", "conferencia", "peso_kg", "vlr_merc", "qtd_volumes",
+    "vol_m3", "peso_calculado", "classifi", "tomador", "destinatario", "bairro", "cidade", "uf", "nf_serie",
+    "tipo_ca", "tipo_carga", "qtd_nf", "regiao", "mesorregiao", "sub_regiao", "ocorrencias_nfs", "remetente",
+    "observacao_r", "ref_cliente", "cidade_dest", "agenda", "ultima", "status", "latitude_destinatario",
+    "longitude_destinatario", "prioridade_embarque", "restricao_veiculo", "veiculo_exclusivo", "inicio_entrega",
+    "fim_entrega", "prioridade_embarque_num", "agendada", "veiculo_exclusivo_flag", "origem_cidade", "origem_uf",
+    "latitude_filial", "longitude_filial", "data_base_roteirizacao", "cidade_chave", "uf_chave",
+    "ranking_preliminar", "score_prioridade_preliminar", "subregiao", "data_limite_considerada",
+    "tipo_data_limite", "dias_ate_data_alvo", "horas_viagem_estimadas", "transit_time_dias", "folga_dias",
+    "status_folga", "distancia_km", "distancia_rodoviaria_est_km", "faixa_km_cd", "quadrante",
+    "perfil_veiculo_referencia", "status_geo", "origem_latitude", "origem_longitude", "status_triagem",
+    "motivo_triagem", "grupo_saida", "prioridade_label", "ranking_prioridade_operacional", "flag_roteirizavel",
+    "flag_agendamento_futuro", "flag_agenda_vencida", "id_linha_pipeline",
+]
 
 
 def _normalizar_dataframe_para_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
@@ -92,18 +93,14 @@ def _gerar_chave_linha_dataset(row: Dict[str, Any]) -> str:
     return hashlib.sha256(assinatura.encode("utf-8")).hexdigest()
 
 
-def _extrair_campos_base(row: Dict[str, Any]) -> Dict[str, Any]:
-    return {k: v for k, v in row.items() if k in COLUNAS_BASE_REFERENCIA}
-
-
-def _extrair_campos_calculados(row: Dict[str, Any]) -> Dict[str, Any]:
-    calculados: Dict[str, Any] = {}
-    for k, v in row.items():
-        if k in COLUNAS_BASE_REFERENCIA:
-            continue
-        if any(k.startswith(prefixo) for prefixo in PREFIXOS_CALCULADOS):
-            calculados[k] = v
-    return calculados
+def _normalizar_valor_flat(valor: Any) -> Any:
+    if valor is None:
+        return None
+    if isinstance(valor, (datetime, pd.Timestamp)):
+        return pd.to_datetime(valor, errors="coerce").isoformat() if pd.notna(valor) else None
+    if isinstance(valor, (dict, list)):
+        return json.dumps(valor, ensure_ascii=False)
+    return valor
 
 
 def _config_supabase() -> tuple[str | None, str | None]:
@@ -121,21 +118,52 @@ def persistir_snapshot_modulo_auditoria(
     ordem_modulo: int,
     df_etapa: pd.DataFrame | None,
     snapshot_nome: str | None = None,
-    modulo_origem: str | None = None,
-    tipo_registro: str = "carteira_linha",
     contexto: Dict[str, Any] | None = None,
+    rastreamento: Dict[str, Any] | None = None,
 ) -> int:
     contexto = contexto or {}
+    rastreamento = rastreamento or {}
     rows = _normalizar_dataframe_para_records(df_etapa if isinstance(df_etapa, pd.DataFrame) else pd.DataFrame())
     total_linhas = len(rows)
 
     if total_linhas == 0:
-        print(f"[AUDITORIA] snapshot modulo={modulo} sem linhas para persistir")
+        print(f"[AUDITORIA FLAT] snapshot={snapshot_nome or modulo} linhas=0")
         return 0
+
+    payload_insert: List[Dict[str, Any]] = []
+    for idx, row in enumerate(rows):
+        id_linha_pipeline = _pick_primeiro_valor(row, ["id_linha_pipeline", "id_linha", "linha_id", "pedido_id"])
+        chave_linha_dataset = _gerar_chave_linha_dataset(row)
+        if idx == 0:
+            print(f"[AUDITORIA FLAT] exemplo_chave_linha_dataset={chave_linha_dataset}")
+
+        registro: Dict[str, Any] = {
+            "teste_id": teste_id,
+            "rodada_id": rodada_id,
+            "upload_id": upload_id,
+            "modulo": modulo,
+            "ordem_modulo": ordem_modulo,
+            "snapshot_nome": snapshot_nome or modulo,
+            "chave_linha_dataset": chave_linha_dataset,
+            "id_linha_pipeline": str(id_linha_pipeline) if id_linha_pipeline is not None else None,
+            "payload_linha_json": row,
+            "campos_auditoria_json": {
+                "modulo": modulo,
+                "ordem_modulo": ordem_modulo,
+                "snapshot_nome": snapshot_nome or modulo,
+                "snapshot_em": datetime.utcnow().isoformat() + "Z",
+            },
+        }
+        for coluna in COLUNAS_AUDITORIA_FLAT:
+            if coluna in row:
+                registro[coluna] = _normalizar_valor_flat(row.get(coluna))
+                rastreamento.setdefault("colunas_persistidas", set()).add(coluna)
+        payload_insert.append(registro)
 
     supabase_url, supabase_key = _config_supabase()
     if not supabase_url or not supabase_key:
         print(f"[AUDITORIA] supabase não configurado. modulo={modulo} linhas={total_linhas}")
+        print(f"[AUDITORIA FLAT] snapshot={snapshot_nome or modulo} linhas=0")
         return 0
 
     endpoint = f"{supabase_url.rstrip('/')}/rest/v1/auditoria_pipeline_modular"
@@ -145,53 +173,6 @@ def persistir_snapshot_modulo_auditoria(
         "Content-Type": "application/json",
         "Prefer": "return=minimal",
     }
-
-    payload_insert: List[Dict[str, Any]] = []
-    for idx, row in enumerate(rows):
-        id_linha_pipeline = _pick_primeiro_valor(row, ["id_linha_pipeline", "id_linha", "linha_id", "pedido_id"])
-        manifesto_id = _pick_primeiro_valor(row, ["manifesto_id"])
-        status_linha = _pick_primeiro_valor(row, ["status_linha", "status"])
-        status_triagem = _pick_primeiro_valor(row, ["status_triagem"])
-        grupo_logico = _pick_primeiro_valor(row, ["grupo_logico", "grupo"])
-        etapa_origem = _pick_primeiro_valor(row, ["etapa_origem", "origem_manifesto_modulo"])
-        chave_linha_dataset = _gerar_chave_linha_dataset(row)
-        if idx == 0:
-            print(f"[AUDITORIA DATASET] exemplo_chave_linha_dataset={chave_linha_dataset}")
-
-        payload_insert.append(
-            {
-                "teste_id": teste_id,
-                "rodada_id": rodada_id,
-                "upload_id": upload_id,
-                "modulo": modulo,
-                "ordem_modulo": ordem_modulo,
-                "tipo_roteirizacao": contexto.get("tipo_roteirizacao"),
-                "filial_id": contexto.get("filial_id"),
-                "usuario_id": contexto.get("usuario_id"),
-                "data_base_roteirizacao": contexto.get("data_base_roteirizacao"),
-                "id_linha_pipeline": str(id_linha_pipeline) if id_linha_pipeline is not None else f"{modulo}-{idx}",
-                "manifesto_id": str(manifesto_id) if manifesto_id is not None else None,
-                "status_linha": str(status_linha) if status_linha is not None else None,
-                "status_triagem": str(status_triagem) if status_triagem is not None else None,
-                "grupo_logico": str(grupo_logico) if grupo_logico is not None else None,
-                "etapa_origem": str(etapa_origem) if etapa_origem is not None else modulo,
-                "chave_linha_dataset": chave_linha_dataset,
-                "snapshot_nome": snapshot_nome or f"{modulo}_linha_completa",
-                "modulo_origem": modulo_origem or modulo,
-                "tipo_registro": tipo_registro,
-                "payload_linha_json": row,
-                "campos_base_json": _extrair_campos_base(row),
-                "campos_calculados_json": _extrair_campos_calculados(row),
-                "campos_auditoria_json": {
-                    "modulo": modulo,
-                    "ordem_modulo": ordem_modulo,
-                    "snapshot_nome": snapshot_nome or f"{modulo}_linha_completa",
-                    "modulo_origem": modulo_origem or modulo,
-                    "tipo_registro": tipo_registro,
-                    "snapshot_em": datetime.utcnow().isoformat() + "Z",
-                },
-            }
-        )
 
     try:
         with httpx.Client(timeout=SUPABASE_TIMEOUT_SECONDS) as client:
@@ -203,4 +184,5 @@ def persistir_snapshot_modulo_auditoria(
         print(f"[AUDITORIA] falha ao persistir modulo={modulo}: {exc}")
         return 0
 
+    print(f"[AUDITORIA FLAT] snapshot={snapshot_nome or modulo} linhas={total_linhas}")
     return total_linhas
