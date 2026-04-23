@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import unicodedata
 from datetime import datetime
 from typing import Any, Dict, List
 
@@ -150,6 +152,55 @@ def _normalizar_row_snapshot(row: Dict[str, Any]) -> Dict[str, Any]:
     return row_sanitizada
 
 
+def _normalizar_nome_coluna_auditoria(nome: str) -> str:
+    if nome is None:
+        return ""
+    texto = str(nome).strip()
+    if not texto:
+        return ""
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = "".join(char for char in texto if not unicodedata.combining(char))
+    texto = texto.replace(" ", "_")
+    texto = re.sub(r"[^a-zA-Z0-9_]", "_", texto)
+    texto = re.sub(r"_+", "_", texto)
+    texto = texto.strip("_")
+    aliases = {
+        "qtd_perfis_elegiaveis": "qtd_perfis_elegiveis",
+    }
+    return aliases.get(texto, texto)
+
+
+def _normalizar_chaves_snapshot(row: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(row, dict):
+        return {}
+
+    row_normalizada: Dict[str, Any] = {}
+    colisoes: Dict[str, Dict[str, Any]] = {}
+    for chave_original, valor in row.items():
+        chave_normalizada = _normalizar_nome_coluna_auditoria(chave_original)
+        if not chave_normalizada:
+            continue
+
+        if chave_normalizada not in row_normalizada:
+            row_normalizada[chave_normalizada] = valor
+            colisoes[chave_normalizada] = {
+                "chave_original": chave_original,
+                "ja_normalizada": chave_original == chave_normalizada,
+            }
+            continue
+
+        atual = colisoes.get(chave_normalizada, {})
+        atual_ja_normalizada = bool(atual.get("ja_normalizada"))
+        chave_original_ja_normalizada = chave_original == chave_normalizada
+        if not atual_ja_normalizada and chave_original_ja_normalizada:
+            row_normalizada[chave_normalizada] = valor
+            colisoes[chave_normalizada] = {
+                "chave_original": chave_original,
+                "ja_normalizada": True,
+            }
+    return row_normalizada
+
+
 def _config_supabase() -> tuple[str | None, str | None]:
     url = os.getenv("SUPABASE_URL")
     key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
@@ -193,6 +244,7 @@ def persistir_snapshot_modulo_auditoria(
     }
     for idx, row in enumerate(rows):
         row_sanitizada = _normalizar_row_snapshot(row)
+        row_sanitizada = _normalizar_chaves_snapshot(row_sanitizada)
         id_linha_pipeline = _pick_primeiro_valor(row_sanitizada, ["id_linha_pipeline", "id_linha", "linha_id", "pedido_id"])
         chave_linha_dataset = _gerar_chave_linha_dataset(row_sanitizada)
         if idx == 0:
@@ -212,13 +264,14 @@ def persistir_snapshot_modulo_auditoria(
             "campos_auditoria_json": {
                 "modulo": modulo,
                 "ordem_modulo": ordem_modulo,
-                "snapshot_nome": snapshot_nome or modulo,
+                "snapshot_nome": str(snapshot_nome or modulo),
                 "snapshot_em": datetime.utcnow().isoformat() + "Z",
             },
         }
         for coluna in COLUNAS_AUDITORIA_FLAT:
-            if coluna in row_sanitizada and coluna not in colunas_fixas_tabela:
-                registro[coluna] = _normalizar_valor_flat(row_sanitizada.get(coluna))
+            coluna_normalizada = _normalizar_nome_coluna_auditoria(coluna)
+            if coluna_normalizada in row_sanitizada and coluna_normalizada not in colunas_fixas_tabela:
+                registro[coluna] = _normalizar_valor_flat(row_sanitizada.get(coluna_normalizada))
                 rastreamento.setdefault("colunas_persistidas", set()).add(coluna)
         payload_insert.append(registro)
 
@@ -247,6 +300,7 @@ def persistir_snapshot_modulo_auditoria(
         print("[AUDITORIA ERRO DETALHADO]")
         print("snapshot:", snapshot_nome or modulo)
         if payload_insert:
+            print("[AUDITORIA ERRO CHAVES]", sorted(list(payload_insert[0].get("payload_linha_json", {}).keys()))[:200])
             try:
                 print("exemplo payload:", json.dumps(payload_insert[0], ensure_ascii=False)[:2000])
             except Exception:
