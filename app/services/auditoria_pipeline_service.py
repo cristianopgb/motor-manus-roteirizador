@@ -43,7 +43,7 @@ COLUNAS_AUDITORIA_FLAT: List[str] = [
     "motivo_triagem", "grupo_saida", "prioridade_label", "ranking_prioridade_operacional", "flag_roteirizavel",
     "flag_agendamento_futuro", "flag_agenda_vencida", "id_linha_pipeline",
     "manifesto_id", "tipo_manifesto", "veiculo_tipo", "veiculo_perfil", "qtd_eixos", "qtd_itens", "qtd_ctes",
-    "qtd_paradas", "base_carga_oficial", "peso_total_kg", "vol_total_m3", "km_referencia",
+    "qtd_paradas", "qtd_cidades", "base_carga_oficial", "peso_total_kg", "vol_total_m3", "km_referencia",
     "ocupacao_oficial_perc", "capacidade_peso_kg_veiculo", "capacidade_vol_m3_veiculo", "max_entregas_veiculo",
     "max_km_distancia_veiculo", "ocupacao_minima_perc_veiculo", "ocupacao_maxima_perc_veiculo",
     "ignorar_ocupacao_minima", "origem_modulo",
@@ -51,6 +51,9 @@ COLUNAS_AUDITORIA_FLAT: List[str] = [
     "peso_total_cidade", "km_referencia_cidade", "qtd_clientes_cidade", "qtd_linhas_cidade",
     "status_perfil_cidade", "motivo_status_perfil_cidade", "regra_aplicada", "cidade_elegivel_m5_1",
     "motivo_status_cidade_m5_1", "ordem_cidade_m5_1",
+    "peso_total_subregiao", "qtd_linhas_subregiao", "qtd_clientes_subregiao", "km_referencia_subregiao",
+    "status_perfil_subregiao", "motivo_status_perfil_subregiao", "subregiao_elegivel_m5_3",
+    "motivo_status_subregiao_m5_3", "ordem_subregiao_m5_3",
     "tentativa_idx", "blocos_considerados", "veiculo_tipo_tentado", "veiculo_perfil_tentado", "resultado",
     "motivo", "qtd_itens_candidato", "qtd_paradas_candidato", "peso_total_candidato", "peso_kg_total_candidato",
     "volume_total_candidato", "km_referencia_candidato", "ocupacao_perc_candidato",
@@ -212,7 +215,7 @@ def persistir_snapshot_modulo_auditoria(
             },
         }
         for coluna in COLUNAS_AUDITORIA_FLAT:
-            if coluna in row_sanitizada and coluna in colunas_fixas_tabela:
+            if coluna in row_sanitizada and coluna not in colunas_fixas_tabela:
                 registro[coluna] = _normalizar_valor_flat(row_sanitizada.get(coluna))
                 rastreamento.setdefault("colunas_persistidas", set()).add(coluna)
         payload_insert.append(registro)
