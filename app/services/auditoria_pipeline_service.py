@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 import httpx
+import numpy as np
 import pandas as pd
 
 from app.utils.json_safe import sanitizar_json_safe
@@ -115,6 +116,35 @@ def _normalizar_valor_flat(valor: Any) -> Any:
     return valor
 
 
+def _normalizar_valor_json(valor: Any) -> Any:
+    if valor is None or valor is pd.NA:
+        return None
+    if isinstance(valor, float) and pd.isna(valor):
+        return None
+    if isinstance(valor, (np.generic,)):
+        return valor.item()
+    if isinstance(valor, (pd.Timestamp, datetime)):
+        return pd.to_datetime(valor, errors="coerce").isoformat() if pd.notna(valor) else None
+    if isinstance(valor, (list, dict)):
+        return json.dumps(valor, ensure_ascii=False)
+    if hasattr(valor, "to_pydatetime"):
+        try:
+            return valor.to_pydatetime().isoformat()
+        except Exception:
+            return str(valor)
+    if isinstance(valor, (pd.Series, pd.DataFrame)):
+        return json.dumps(sanitizar_json_safe(valor.to_dict())[0], ensure_ascii=False)
+    return valor
+
+
+def _normalizar_row_snapshot(row: Dict[str, Any]) -> Dict[str, Any]:
+    row_normalizada: Dict[str, Any] = {}
+    for col, val in row.items():
+        row_normalizada[col] = _normalizar_valor_json(val)
+    row_sanitizada, _ = sanitizar_json_safe(row_normalizada)
+    return row_sanitizada
+
+
 def _config_supabase() -> tuple[str | None, str | None]:
     url = os.getenv("SUPABASE_URL")
     key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
@@ -143,9 +173,23 @@ def persistir_snapshot_modulo_auditoria(
         return 0
 
     payload_insert: List[Dict[str, Any]] = []
+    colunas_fixas_tabela = {
+        "teste_id",
+        "rodada_id",
+        "upload_id",
+        "modulo",
+        "ordem_modulo",
+        "snapshot_nome",
+        "chave_linha_dataset",
+        "id_linha_pipeline",
+        "manifesto_id",
+        "payload_linha_json",
+        "campos_auditoria_json",
+    }
     for idx, row in enumerate(rows):
-        id_linha_pipeline = _pick_primeiro_valor(row, ["id_linha_pipeline", "id_linha", "linha_id", "pedido_id"])
-        chave_linha_dataset = _gerar_chave_linha_dataset(row)
+        row_sanitizada = _normalizar_row_snapshot(row)
+        id_linha_pipeline = _pick_primeiro_valor(row_sanitizada, ["id_linha_pipeline", "id_linha", "linha_id", "pedido_id"])
+        chave_linha_dataset = _gerar_chave_linha_dataset(row_sanitizada)
         if idx == 0:
             print(f"[AUDITORIA FLAT] exemplo_chave_linha_dataset={chave_linha_dataset}")
 
@@ -158,7 +202,8 @@ def persistir_snapshot_modulo_auditoria(
             "snapshot_nome": snapshot_nome or modulo,
             "chave_linha_dataset": chave_linha_dataset,
             "id_linha_pipeline": str(id_linha_pipeline) if id_linha_pipeline is not None else None,
-            "payload_linha_json": row,
+            "manifesto_id": _normalizar_valor_flat(row_sanitizada.get("manifesto_id")),
+            "payload_linha_json": row_sanitizada,
             "campos_auditoria_json": {
                 "modulo": modulo,
                 "ordem_modulo": ordem_modulo,
@@ -167,8 +212,8 @@ def persistir_snapshot_modulo_auditoria(
             },
         }
         for coluna in COLUNAS_AUDITORIA_FLAT:
-            if coluna in row:
-                registro[coluna] = _normalizar_valor_flat(row.get(coluna))
+            if coluna in row_sanitizada and coluna in colunas_fixas_tabela:
+                registro[coluna] = _normalizar_valor_flat(row_sanitizada.get(coluna))
                 rastreamento.setdefault("colunas_persistidas", set()).add(coluna)
         payload_insert.append(registro)
 
@@ -194,6 +239,13 @@ def persistir_snapshot_modulo_auditoria(
                 response.raise_for_status()
     except Exception as exc:
         print(f"[AUDITORIA] falha ao persistir modulo={modulo}: {exc}")
+        print("[AUDITORIA ERRO DETALHADO]")
+        print("snapshot:", snapshot_nome or modulo)
+        if payload_insert:
+            try:
+                print("exemplo payload:", json.dumps(payload_insert[0], ensure_ascii=False)[:2000])
+            except Exception:
+                print("exemplo payload: <erro ao serializar payload para log>")
         return 0
 
     print(f"[AUDITORIA FLAT] snapshot={snapshot_nome or modulo} linhas={total_linhas}")
