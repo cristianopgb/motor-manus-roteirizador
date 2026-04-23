@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from datetime import datetime
 from typing import Any, Dict, List
@@ -63,6 +65,33 @@ def _pick_primeiro_valor(row: Dict[str, Any], nomes: List[str]) -> Any:
     return None
 
 
+def _valor_normalizado_chave(valor: Any) -> str:
+    if valor is None:
+        return ""
+    texto = str(valor).strip()
+    if texto.lower() in {"none", "nan", "nat"}:
+        return ""
+    return texto
+
+
+def _gerar_chave_linha_dataset(row: Dict[str, Any]) -> str:
+    id_linha = _pick_primeiro_valor(row, ["id_linha_pipeline"])
+    if id_linha is not None and _valor_normalizado_chave(id_linha):
+        return _valor_normalizado_chave(id_linha)
+
+    campos_fallback = {
+        "nro_documento": _valor_normalizado_chave(_pick_primeiro_valor(row, ["nro_documento"])),
+        "destinatario": _valor_normalizado_chave(_pick_primeiro_valor(row, ["destinatario"])),
+        "cidade": _valor_normalizado_chave(_pick_primeiro_valor(row, ["cidade"])),
+        "uf": _valor_normalizado_chave(_pick_primeiro_valor(row, ["uf"])),
+        "data_nf": _valor_normalizado_chave(_pick_primeiro_valor(row, ["data_nf"])),
+        "romaneio": _valor_normalizado_chave(_pick_primeiro_valor(row, ["romaneio"])),
+        "serie": _valor_normalizado_chave(_pick_primeiro_valor(row, ["serie"])),
+    }
+    assinatura = json.dumps(campos_fallback, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(assinatura.encode("utf-8")).hexdigest()
+
+
 def _extrair_campos_base(row: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in row.items() if k in COLUNAS_BASE_REFERENCIA}
 
@@ -91,6 +120,9 @@ def persistir_snapshot_modulo_auditoria(
     modulo: str,
     ordem_modulo: int,
     df_etapa: pd.DataFrame | None,
+    snapshot_nome: str | None = None,
+    modulo_origem: str | None = None,
+    tipo_registro: str = "carteira_linha",
     contexto: Dict[str, Any] | None = None,
 ) -> int:
     contexto = contexto or {}
@@ -122,6 +154,9 @@ def persistir_snapshot_modulo_auditoria(
         status_triagem = _pick_primeiro_valor(row, ["status_triagem"])
         grupo_logico = _pick_primeiro_valor(row, ["grupo_logico", "grupo"])
         etapa_origem = _pick_primeiro_valor(row, ["etapa_origem", "origem_manifesto_modulo"])
+        chave_linha_dataset = _gerar_chave_linha_dataset(row)
+        if idx == 0:
+            print(f"[AUDITORIA DATASET] exemplo_chave_linha_dataset={chave_linha_dataset}")
 
         payload_insert.append(
             {
@@ -140,12 +175,19 @@ def persistir_snapshot_modulo_auditoria(
                 "status_triagem": str(status_triagem) if status_triagem is not None else None,
                 "grupo_logico": str(grupo_logico) if grupo_logico is not None else None,
                 "etapa_origem": str(etapa_origem) if etapa_origem is not None else modulo,
+                "chave_linha_dataset": chave_linha_dataset,
+                "snapshot_nome": snapshot_nome or f"{modulo}_linha_completa",
+                "modulo_origem": modulo_origem or modulo,
+                "tipo_registro": tipo_registro,
                 "payload_linha_json": row,
                 "campos_base_json": _extrair_campos_base(row),
                 "campos_calculados_json": _extrair_campos_calculados(row),
                 "campos_auditoria_json": {
                     "modulo": modulo,
                     "ordem_modulo": ordem_modulo,
+                    "snapshot_nome": snapshot_nome or f"{modulo}_linha_completa",
+                    "modulo_origem": modulo_origem or modulo,
+                    "tipo_registro": tipo_registro,
                     "snapshot_em": datetime.utcnow().isoformat() + "Z",
                 },
             }
