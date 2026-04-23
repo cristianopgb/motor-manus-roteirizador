@@ -185,6 +185,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     teste_id_auditoria = str(uuid.uuid4())
     auditoria_por_modulo: Dict[str, int] = {}
     auditoria_por_snapshot: Dict[str, int] = {}
+    auditoria_flat_rastreamento: Dict[str, Any] = {"colunas_persistidas": set()}
     print("[AUDITORIA] teste_id:", teste_id_auditoria)
     print("[PIPELINE FLAGS] executar_m4=", PIPELINE_FLAGS["executar_m4"])
     print("[PIPELINE FLAGS] executar_m5_1=", PIPELINE_FLAGS["executar_m5_1"])
@@ -234,14 +235,13 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         modulo="payload_service",
         ordem_modulo=0,
         df_etapa=contexto.df_carteira_raw,
-        snapshot_nome="payload_service_linha_completa",
-        modulo_origem="payload_service",
-        tipo_registro="carteira_linha",
+        snapshot_nome="payload_service",
         contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
     )
     auditoria_por_modulo["payload_service"] = auditoria_por_modulo.get("payload_service", 0) + total_payload
-    auditoria_por_snapshot["payload_service_linha_completa"] = auditoria_por_snapshot.get("payload_service_linha_completa", 0) + total_payload
-    print(f"[AUDITORIA DATASET] modulo=payload_service snapshot=payload_service_linha_completa linhas={total_payload}")
+    auditoria_por_snapshot["payload_service"] = auditoria_por_snapshot.get("payload_service", 0) + total_payload
+    print(f"[AUDITORIA FLAT] snapshot=payload_service linhas={total_payload}")
 
     # =========================================================================================
     # M0
@@ -273,14 +273,13 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         modulo="m0_adapter",
         ordem_modulo=1,
         df_etapa=resultado_m0["df_carteira_raw"],
-        snapshot_nome="m0_adapter_linha_completa",
-        modulo_origem="m0_adapter",
-        tipo_registro="carteira_linha",
+        snapshot_nome="m0_adapter",
         contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
     )
     auditoria_por_modulo["m0_adapter"] = auditoria_por_modulo.get("m0_adapter", 0) + total_m0
-    auditoria_por_snapshot["m0_adapter_linha_completa"] = auditoria_por_snapshot.get("m0_adapter_linha_completa", 0) + total_m0
-    print(f"[AUDITORIA DATASET] modulo=m0_adapter snapshot=m0_adapter_linha_completa linhas={total_m0}")
+    auditoria_por_snapshot["m0_adapter"] = auditoria_por_snapshot.get("m0_adapter", 0) + total_m0
+    print(f"[AUDITORIA FLAT] snapshot=m0_adapter linhas={total_m0}")
 
     # =========================================================================================
     # M1
@@ -325,14 +324,13 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         modulo="m1_padronizacao",
         ordem_modulo=2,
         df_etapa=df_carteira_tratada,
-        snapshot_nome="m1_padronizacao_linha_completa",
-        modulo_origem="m1_padronizacao",
-        tipo_registro="carteira_linha",
+        snapshot_nome="m1_padronizacao",
         contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
     )
     auditoria_por_modulo["m1_padronizacao"] = auditoria_por_modulo.get("m1_padronizacao", 0) + total_m1
-    auditoria_por_snapshot["m1_padronizacao_linha_completa"] = auditoria_por_snapshot.get("m1_padronizacao_linha_completa", 0) + total_m1
-    print(f"[AUDITORIA DATASET] modulo=m1_padronizacao snapshot=m1_padronizacao_linha_completa linhas={total_m1}")
+    auditoria_por_snapshot["m1_padronizacao"] = auditoria_por_snapshot.get("m1_padronizacao", 0) + total_m1
+    print(f"[AUDITORIA FLAT] snapshot=m1_padronizacao linhas={total_m1}")
 
     # =========================================================================================
     # M2
@@ -366,14 +364,13 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         modulo="m2_enriquecimento",
         ordem_modulo=3,
         df_etapa=df_carteira_enriquecida,
-        snapshot_nome="m2_enriquecimento_linha_completa",
-        modulo_origem="m2_enriquecimento",
-        tipo_registro="carteira_linha",
+        snapshot_nome="m2_enriquecimento",
         contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
     )
     auditoria_por_modulo["m2_enriquecimento"] = auditoria_por_modulo.get("m2_enriquecimento", 0) + total_m2
-    auditoria_por_snapshot["m2_enriquecimento_linha_completa"] = auditoria_por_snapshot.get("m2_enriquecimento_linha_completa", 0) + total_m2
-    print(f"[AUDITORIA DATASET] modulo=m2_enriquecimento snapshot=m2_enriquecimento_linha_completa linhas={total_m2}")
+    auditoria_por_snapshot["m2_enriquecimento"] = auditoria_por_snapshot.get("m2_enriquecimento", 0) + total_m2
+    print(f"[AUDITORIA FLAT] snapshot=m2_enriquecimento linhas={total_m2}")
 
     # =========================================================================================
     # M3
@@ -412,71 +409,14 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         modulo="m3_triagem",
         ordem_modulo=4,
         df_etapa=df_carteira_triagem,
-        snapshot_nome="m3_triagem_linha_completa",
-        modulo_origem="m3_triagem",
-        tipo_registro="carteira_linha",
+        snapshot_nome="m3_triagem",
         contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
     )
     auditoria_por_modulo["m3_triagem"] = auditoria_por_modulo.get("m3_triagem", 0) + total_m3
-    auditoria_por_snapshot["m3_triagem_linha_completa"] = auditoria_por_snapshot.get("m3_triagem_linha_completa", 0) + total_m3
-    print(f"[AUDITORIA DATASET] modulo=m3_triagem snapshot=m3_triagem_linha_completa linhas={total_m3}")
+    auditoria_por_snapshot["m3_triagem"] = auditoria_por_snapshot.get("m3_triagem", 0) + total_m3
+    print(f"[AUDITORIA FLAT] snapshot=m3_triagem linhas={total_m3}")
 
-    total_m3_agendas_vencidas = persistir_snapshot_modulo_auditoria(
-        teste_id=teste_id_auditoria,
-        rodada_id=contexto.rodada_id,
-        upload_id=contexto.upload_id,
-        modulo="m3_triagem",
-        ordem_modulo=4,
-        df_etapa=df_carteira_agendas_vencidas,
-        snapshot_nome="m3_agendas_vencidas",
-        modulo_origem="m3_triagem",
-        tipo_registro="remanescente",
-        contexto=contexto_auditoria,
-    )
-    auditoria_por_modulo["m3_triagem"] = auditoria_por_modulo.get("m3_triagem", 0) + total_m3_agendas_vencidas
-    auditoria_por_snapshot["m3_agendas_vencidas"] = auditoria_por_snapshot.get("m3_agendas_vencidas", 0) + total_m3_agendas_vencidas
-    print(f"[AUDITORIA DATASET] modulo=m3_triagem snapshot=m3_agendas_vencidas linhas={total_m3_agendas_vencidas}")
-
-    total_m3_agendamento_futuro = persistir_snapshot_modulo_auditoria(
-        teste_id=teste_id_auditoria,
-        rodada_id=contexto.rodada_id,
-        upload_id=contexto.upload_id,
-        modulo="m3_triagem",
-        ordem_modulo=4,
-        df_etapa=df_carteira_agendamento_futuro,
-        snapshot_nome="m3_agendamento_futuro",
-        modulo_origem="m3_triagem",
-        tipo_registro="remanescente",
-        contexto=contexto_auditoria,
-    )
-    auditoria_por_modulo["m3_triagem"] = auditoria_por_modulo.get("m3_triagem", 0) + total_m3_agendamento_futuro
-    auditoria_por_snapshot["m3_agendamento_futuro"] = auditoria_por_snapshot.get("m3_agendamento_futuro", 0) + total_m3_agendamento_futuro
-    print(f"[AUDITORIA DATASET] modulo=m3_triagem snapshot=m3_agendamento_futuro linhas={total_m3_agendamento_futuro}")
-
-    df_carteira_excecoes_triagem = outputs_m3.get("df_carteira_excecoes_triagem")
-    if not isinstance(df_carteira_excecoes_triagem, pd.DataFrame):
-        if "status_triagem" in df_carteira_triagem.columns:
-            df_carteira_excecoes_triagem = df_carteira_triagem.loc[
-                df_carteira_triagem["status_triagem"].eq("excecao_triagem")
-            ].copy()
-        else:
-            df_carteira_excecoes_triagem = pd.DataFrame()
-    if isinstance(df_carteira_excecoes_triagem, pd.DataFrame) and not df_carteira_excecoes_triagem.empty:
-        total_m3_excecoes = persistir_snapshot_modulo_auditoria(
-            teste_id=teste_id_auditoria,
-            rodada_id=contexto.rodada_id,
-            upload_id=contexto.upload_id,
-            modulo="m3_triagem",
-            ordem_modulo=4,
-            df_etapa=df_carteira_excecoes_triagem,
-            snapshot_nome="m3_excecoes_triagem",
-            modulo_origem="m3_triagem",
-            tipo_registro="remanescente",
-            contexto=contexto_auditoria,
-        )
-        auditoria_por_modulo["m3_triagem"] = auditoria_por_modulo.get("m3_triagem", 0) + total_m3_excecoes
-        auditoria_por_snapshot["m3_excecoes_triagem"] = auditoria_por_snapshot.get("m3_excecoes_triagem", 0) + total_m3_excecoes
-        print(f"[AUDITORIA DATASET] modulo=m3_triagem snapshot=m3_excecoes_triagem linhas={total_m3_excecoes}")
 
     # =========================================================================================
     # M3.1
@@ -510,18 +450,18 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         modulo="m3_1_validacao_fronteira",
         ordem_modulo=5,
         df_etapa=df_input_oficial_bloco_4,
-        snapshot_nome="m3_1_validacao_fronteira_linha_completa",
-        modulo_origem="m3_1_validacao_fronteira",
-        tipo_registro="carteira_linha",
+        snapshot_nome="m3_1_validacao_fronteira",
         contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
     )
     auditoria_por_modulo["m3_1_validacao_fronteira"] = auditoria_por_modulo.get("m3_1_validacao_fronteira", 0) + total_m3_1
-    auditoria_por_snapshot["m3_1_validacao_fronteira_linha_completa"] = auditoria_por_snapshot.get("m3_1_validacao_fronteira_linha_completa", 0) + total_m3_1
-    print(f"[AUDITORIA DATASET] modulo=m3_1_validacao_fronteira snapshot=m3_1_validacao_fronteira_linha_completa linhas={total_m3_1}")
+    auditoria_por_snapshot["m3_1_validacao_fronteira"] = auditoria_por_snapshot.get("m3_1_validacao_fronteira", 0) + total_m3_1
+    print(f"[AUDITORIA FLAT] snapshot=m3_1_validacao_fronteira linhas={total_m3_1}")
 
     if not PIPELINE_FLAGS["executar_m4"]:
         tempo_total = _duracao_ms(inicio_total)
         metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
+        print(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
         return {
             "status": "ok",
             "mensagem": "Execução encerrada propositalmente na etapa base de auditoria (M3.1).",
@@ -533,6 +473,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
                 "teste_id_auditoria": teste_id_auditoria,
                 "modulos": [{"modulo": modulo, "linhas_gravadas": linhas} for modulo, linhas in auditoria_por_modulo.items()],
                 "snapshots": [{"snapshot_nome": snapshot_nome, "linhas_gravadas": linhas} for snapshot_nome, linhas in auditoria_por_snapshot.items()],
+                "colunas_persistidas": sorted(list(auditoria_flat_rastreamento.get("colunas_persistidas", set()))),
             },
             "resumo_execucao": {
                 "rodada_id": contexto.rodada_id,
