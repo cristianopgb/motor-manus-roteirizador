@@ -44,11 +44,15 @@ COLUNAS_AUDITORIA_FLAT: List[str] = [
     "manifesto_id", "tipo_manifesto", "veiculo_tipo", "veiculo_perfil", "qtd_eixos", "qtd_itens", "qtd_ctes",
     "qtd_paradas", "base_carga_oficial", "peso_total_kg", "vol_total_m3", "km_referencia",
     "ocupacao_oficial_perc", "capacidade_peso_kg_veiculo", "capacidade_vol_m3_veiculo", "max_entregas_veiculo",
-    "max_km_distancia_veiculo", "ocupacao_minima_perc_veiculo", "ignorar_ocupacao_minima", "origem_modulo",
+    "max_km_distancia_veiculo", "ocupacao_minima_perc_veiculo", "ocupacao_maxima_perc_veiculo",
+    "ignorar_ocupacao_minima", "origem_modulo",
     "origem_etapa", "motivo_nao_roteirizavel", "motivo_final_remanescente_m4",
     "peso_total_cidade", "km_referencia_cidade", "qtd_clientes_cidade", "qtd_linhas_cidade",
     "status_perfil_cidade", "motivo_status_perfil_cidade", "regra_aplicada", "cidade_elegivel_m5_1",
     "motivo_status_cidade_m5_1", "ordem_cidade_m5_1",
+    "tentativa_idx", "blocos_considerados", "veiculo_tipo_tentado", "veiculo_perfil_tentado", "resultado",
+    "motivo", "qtd_itens_candidato", "qtd_paradas_candidato", "peso_total_candidato", "peso_kg_total_candidato",
+    "volume_total_candidato", "km_referencia_candidato", "ocupacao_perc_candidato",
 ]
 
 

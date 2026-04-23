@@ -28,7 +28,7 @@ from app.utils.json_safe import sanitizar_json_safe
 PIPELINE_FLAGS = {
     "executar_m4": True,
     "executar_m5_1": True,
-    "executar_m5_2": False,
+    "executar_m5_2": True,
     "executar_m5_3a": False,
     "executar_m5_3b": False,
     "executar_m5_4a": False,
@@ -871,6 +871,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # M5.2
     # =========================================================================================
     t0 = _agora()
+    print(f"[M5.2] executando M5.2 com saldo elegivel linhas={_safe_len(df_saldo_elegivel_composicao_m5_1)}")
     m5_2_tem_saldo = isinstance(df_saldo_elegivel_composicao_m5_1, pd.DataFrame) and not df_saldo_elegivel_composicao_m5_1.empty
     m5_2_tem_perfis = isinstance(df_perfis_elegiveis_por_cidade_m5_1, pd.DataFrame) and not df_perfis_elegiveis_por_cidade_m5_1.empty
     if m5_2_tem_saldo and m5_2_tem_perfis:
@@ -908,6 +909,10 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     df_itens_premanifestos_m5_2 = outputs_m5_2["df_itens_premanifestos_m5_2"]
     df_remanescente_m5_2 = outputs_m5_2["df_remanescente_m5_2"]
     df_tentativas_m5_2 = outputs_m5_2["df_tentativas_m5_2"]
+    print(f"[M5.2] df_premanifestos_m5_2 linhas={_safe_len(df_premanifestos_m5_2)}")
+    print(f"[M5.2] df_itens_premanifestos_m5_2 linhas={_safe_len(df_itens_premanifestos_m5_2)}")
+    print(f"[M5.2] df_remanescente_m5_2 linhas={_safe_len(df_remanescente_m5_2)}")
+    print(f"[M5.2] df_tentativas_m5_2 linhas={_safe_len(df_tentativas_m5_2)}")
 
     logs.append(
         _log(
@@ -924,6 +929,114 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             },
         )
     )
+
+    total_m5_2_premanifestos = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m5_2_composicao_cidades",
+        ordem_modulo=8,
+        df_etapa=df_premanifestos_m5_2,
+        snapshot_nome="m5_2_premanifestos",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m5_2_composicao_cidades"] = auditoria_por_modulo.get("m5_2_composicao_cidades", 0) + total_m5_2_premanifestos
+    auditoria_por_snapshot["m5_2_premanifestos"] = auditoria_por_snapshot.get("m5_2_premanifestos", 0) + total_m5_2_premanifestos
+    print(f"[AUDITORIA FLAT] snapshot=m5_2_premanifestos linhas={total_m5_2_premanifestos}")
+
+    total_m5_2_itens_premanifestos = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m5_2_composicao_cidades",
+        ordem_modulo=8,
+        df_etapa=df_itens_premanifestos_m5_2,
+        snapshot_nome="m5_2_itens_premanifestos",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m5_2_composicao_cidades"] = auditoria_por_modulo.get("m5_2_composicao_cidades", 0) + total_m5_2_itens_premanifestos
+    auditoria_por_snapshot["m5_2_itens_premanifestos"] = auditoria_por_snapshot.get("m5_2_itens_premanifestos", 0) + total_m5_2_itens_premanifestos
+    print(f"[AUDITORIA FLAT] snapshot=m5_2_itens_premanifestos linhas={total_m5_2_itens_premanifestos}")
+
+    total_m5_2_remanescente = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m5_2_composicao_cidades",
+        ordem_modulo=8,
+        df_etapa=df_remanescente_m5_2,
+        snapshot_nome="m5_2_remanescente",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m5_2_composicao_cidades"] = auditoria_por_modulo.get("m5_2_composicao_cidades", 0) + total_m5_2_remanescente
+    auditoria_por_snapshot["m5_2_remanescente"] = auditoria_por_snapshot.get("m5_2_remanescente", 0) + total_m5_2_remanescente
+    print(f"[AUDITORIA FLAT] snapshot=m5_2_remanescente linhas={total_m5_2_remanescente}")
+
+    total_m5_2_tentativas = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m5_2_composicao_cidades",
+        ordem_modulo=8,
+        df_etapa=df_tentativas_m5_2,
+        snapshot_nome="m5_2_tentativas",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m5_2_composicao_cidades"] = auditoria_por_modulo.get("m5_2_composicao_cidades", 0) + total_m5_2_tentativas
+    auditoria_por_snapshot["m5_2_tentativas"] = auditoria_por_snapshot.get("m5_2_tentativas", 0) + total_m5_2_tentativas
+    print(f"[AUDITORIA FLAT] snapshot=m5_2_tentativas linhas={total_m5_2_tentativas}")
+
+    if not PIPELINE_FLAGS["executar_m5_3a"]:
+        tempo_total = _duracao_ms(inicio_total)
+        metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
+        print(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
+        return {
+            "status": "ok",
+            "mensagem": "Execução encerrada propositalmente após o M5.2 para auditoria operacional desta etapa.",
+            "pipeline_real_ate": "M5.2",
+            "modo_resposta": "auditoria_m5_2_modular",
+            "resposta_truncada": False,
+            "teste_id_auditoria": teste_id_auditoria,
+            "auditoria_modular": {
+                "teste_id_auditoria": teste_id_auditoria,
+                "modulos": [{"modulo": modulo, "linhas_gravadas": linhas} for modulo, linhas in auditoria_por_modulo.items()],
+                "snapshots": [{"snapshot_nome": snapshot_nome, "linhas_gravadas": linhas} for snapshot_nome, linhas in auditoria_por_snapshot.items()],
+                "colunas_persistidas": sorted(list(auditoria_flat_rastreamento.get("colunas_persistidas", set()))),
+            },
+            "resumo_execucao": {
+                "rodada_id": contexto.rodada_id,
+                "upload_id": contexto.upload_id,
+                "usuario_id": contexto.usuario_id,
+                "filial_id": contexto.filial_id,
+                "tipo_roteirizacao": contexto.tipo_roteirizacao,
+                "data_base_roteirizacao": contexto.data_base.isoformat(),
+                "tempos_ms": metricas_tempo,
+            },
+            "resumo_negocio": {
+                "total_carteira": _safe_len(contexto.df_carteira_raw),
+                "total_enriquecida_m2": _safe_len(df_carteira_enriquecida),
+                "total_triagem_m3": _safe_len(df_carteira_triagem),
+                "total_roteirizavel_m3": _safe_len(df_carteira_roteirizavel),
+                "total_input_bloco_4": _safe_len(df_input_oficial_bloco_4),
+                "total_manifestos_m4": _safe_len(df_manifestos_m4),
+                "total_itens_manifestados_m4": _safe_len(df_itens_manifestados_m4),
+                "total_remanescente_m4": _safe_len(df_remanescente_roteirizavel_bloco_4),
+                "total_saldo_elegivel_m5_1": _safe_len(df_saldo_elegivel_composicao_m5_1),
+                "total_saldo_nao_elegivel_m5_1": _safe_len(df_saldo_nao_elegivel_m5_1),
+                "total_premanifestos_m5_2": _safe_len(df_premanifestos_m5_2),
+                "total_itens_premanifestados_m5_2": _safe_len(df_itens_premanifestos_m5_2),
+                "total_remanescente_m5_2": _safe_len(df_remanescente_m5_2),
+                "total_tentativas_m5_2": _safe_len(df_tentativas_m5_2),
+            },
+            "resumo_m4": resumo_m4,
+            "resumo_m5_1": resumo_m5_1,
+            "resumo_m5_2": resumo_m5_2,
+            "logs": logs,
+        }
 
     # =========================================================================================
     # M5.3A
