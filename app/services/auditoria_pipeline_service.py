@@ -46,6 +46,9 @@ COLUNAS_AUDITORIA_FLAT: List[str] = [
     "ocupacao_oficial_perc", "capacidade_peso_kg_veiculo", "capacidade_vol_m3_veiculo", "max_entregas_veiculo",
     "max_km_distancia_veiculo", "ocupacao_minima_perc_veiculo", "ignorar_ocupacao_minima", "origem_modulo",
     "origem_etapa", "motivo_nao_roteirizavel", "motivo_final_remanescente_m4",
+    "peso_total_cidade", "km_referencia_cidade", "qtd_clientes_cidade", "qtd_linhas_cidade",
+    "status_perfil_cidade", "motivo_status_perfil_cidade", "regra_aplicada", "cidade_elegivel_m5_1",
+    "motivo_status_cidade_m5_1", "ordem_cidade_m5_1",
 ]
 
 

@@ -27,7 +27,7 @@ from app.utils.json_safe import sanitizar_json_safe
 
 PIPELINE_FLAGS = {
     "executar_m4": True,
-    "executar_m5_1": False,
+    "executar_m5_1": True,
     "executar_m5_2": False,
     "executar_m5_3a": False,
     "executar_m5_3b": False,
@@ -673,6 +673,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # M5.1
     # =========================================================================================
     t0 = _agora()
+    print(f"[M5.1] executando M5.1 com remanescente do M4 linhas={_safe_len(df_remanescente_roteirizavel_bloco_4)}")
     outputs_m5_1, meta_m5_1 = executar_m5_1_triagem_cidades(
         df_remanescente_roteirizavel_bloco_4=df_remanescente_roteirizavel_bloco_4,
         df_veiculos_tratados=df_veiculos_tratados,
@@ -681,8 +682,20 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     metricas_tempo["m5_1_triagem_cidades_ms"] = tempo_m5_1
 
     resumo_m5_1 = meta_m5_1["resumo_m5_1"]
+    df_cidades_consolidadas_m5_1 = outputs_m5_1["df_cidades_consolidadas_m5_1"]
+    df_perfis_viaveis_por_cidade_m5_1 = outputs_m5_1["df_perfis_viaveis_por_cidade_m5_1"]
     df_saldo_elegivel_composicao_m5_1 = outputs_m5_1["df_saldo_elegivel_composicao_m5_1"]
+    df_saldo_nao_elegivel_m5_1 = outputs_m5_1["df_saldo_nao_elegivel_m5_1"]
     df_perfis_elegiveis_por_cidade_m5_1 = outputs_m5_1["df_perfis_elegiveis_por_cidade_m5_1"]
+    df_perfis_descartados_por_cidade_m5_1 = outputs_m5_1["df_perfis_descartados_por_cidade_m5_1"]
+    df_tentativas_triagem_cidades_m5_1 = outputs_m5_1["df_tentativas_triagem_cidades_m5_1"]
+
+    print(f"[M5.1] df_cidades_consolidadas_m5_1 linhas={_safe_len(df_cidades_consolidadas_m5_1)}")
+    print(f"[M5.1] df_perfis_elegiveis_por_cidade_m5_1 linhas={_safe_len(df_perfis_elegiveis_por_cidade_m5_1)}")
+    print(f"[M5.1] df_perfis_descartados_por_cidade_m5_1 linhas={_safe_len(df_perfis_descartados_por_cidade_m5_1)}")
+    print(f"[M5.1] df_saldo_elegivel_composicao_m5_1 linhas={_safe_len(df_saldo_elegivel_composicao_m5_1)}")
+    print(f"[M5.1] df_saldo_nao_elegivel_m5_1 linhas={_safe_len(df_saldo_nao_elegivel_m5_1)}")
+    print(f"[M5.1] df_tentativas_triagem_cidades_m5_1 linhas={_safe_len(df_tentativas_triagem_cidades_m5_1)}")
 
     logs.append(
         _log(
@@ -695,6 +708,164 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             extra=resumo_m5_1,
         )
     )
+    total_m5_1_cidades_consolidadas = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m5_1_triagem_cidades",
+        ordem_modulo=7,
+        df_etapa=df_cidades_consolidadas_m5_1,
+        snapshot_nome="m5_1_cidades_consolidadas",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m5_1_triagem_cidades"] = auditoria_por_modulo.get("m5_1_triagem_cidades", 0) + total_m5_1_cidades_consolidadas
+    auditoria_por_snapshot["m5_1_cidades_consolidadas"] = auditoria_por_snapshot.get("m5_1_cidades_consolidadas", 0) + total_m5_1_cidades_consolidadas
+    print(f"[AUDITORIA FLAT] snapshot=m5_1_cidades_consolidadas linhas={total_m5_1_cidades_consolidadas}")
+
+    total_m5_1_perfis_viaveis = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m5_1_triagem_cidades",
+        ordem_modulo=7,
+        df_etapa=df_perfis_viaveis_por_cidade_m5_1,
+        snapshot_nome="m5_1_perfis_viaveis",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m5_1_triagem_cidades"] = auditoria_por_modulo.get("m5_1_triagem_cidades", 0) + total_m5_1_perfis_viaveis
+    auditoria_por_snapshot["m5_1_perfis_viaveis"] = auditoria_por_snapshot.get("m5_1_perfis_viaveis", 0) + total_m5_1_perfis_viaveis
+
+    total_m5_1_perfis_elegiveis = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m5_1_triagem_cidades",
+        ordem_modulo=7,
+        df_etapa=df_perfis_elegiveis_por_cidade_m5_1,
+        snapshot_nome="m5_1_perfis_elegiveis",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m5_1_triagem_cidades"] = auditoria_por_modulo.get("m5_1_triagem_cidades", 0) + total_m5_1_perfis_elegiveis
+    auditoria_por_snapshot["m5_1_perfis_elegiveis"] = auditoria_por_snapshot.get("m5_1_perfis_elegiveis", 0) + total_m5_1_perfis_elegiveis
+    print(f"[AUDITORIA FLAT] snapshot=m5_1_perfis_elegiveis linhas={total_m5_1_perfis_elegiveis}")
+
+    total_m5_1_perfis_descartados = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m5_1_triagem_cidades",
+        ordem_modulo=7,
+        df_etapa=df_perfis_descartados_por_cidade_m5_1,
+        snapshot_nome="m5_1_perfis_descartados",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m5_1_triagem_cidades"] = auditoria_por_modulo.get("m5_1_triagem_cidades", 0) + total_m5_1_perfis_descartados
+    auditoria_por_snapshot["m5_1_perfis_descartados"] = auditoria_por_snapshot.get("m5_1_perfis_descartados", 0) + total_m5_1_perfis_descartados
+
+    total_m5_1_saldo_elegivel = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m5_1_triagem_cidades",
+        ordem_modulo=7,
+        df_etapa=df_saldo_elegivel_composicao_m5_1,
+        snapshot_nome="m5_1_saldo_elegivel",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m5_1_triagem_cidades"] = auditoria_por_modulo.get("m5_1_triagem_cidades", 0) + total_m5_1_saldo_elegivel
+    auditoria_por_snapshot["m5_1_saldo_elegivel"] = auditoria_por_snapshot.get("m5_1_saldo_elegivel", 0) + total_m5_1_saldo_elegivel
+    print(f"[AUDITORIA FLAT] snapshot=m5_1_saldo_elegivel linhas={total_m5_1_saldo_elegivel}")
+
+    total_m5_1_saldo_nao_elegivel = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m5_1_triagem_cidades",
+        ordem_modulo=7,
+        df_etapa=df_saldo_nao_elegivel_m5_1,
+        snapshot_nome="m5_1_saldo_nao_elegivel",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m5_1_triagem_cidades"] = auditoria_por_modulo.get("m5_1_triagem_cidades", 0) + total_m5_1_saldo_nao_elegivel
+    auditoria_por_snapshot["m5_1_saldo_nao_elegivel"] = auditoria_por_snapshot.get("m5_1_saldo_nao_elegivel", 0) + total_m5_1_saldo_nao_elegivel
+    print(f"[AUDITORIA FLAT] snapshot=m5_1_saldo_nao_elegivel linhas={total_m5_1_saldo_nao_elegivel}")
+
+    total_m5_1_tentativas = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m5_1_triagem_cidades",
+        ordem_modulo=7,
+        df_etapa=df_tentativas_triagem_cidades_m5_1,
+        snapshot_nome="m5_1_tentativas",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m5_1_triagem_cidades"] = auditoria_por_modulo.get("m5_1_triagem_cidades", 0) + total_m5_1_tentativas
+    auditoria_por_snapshot["m5_1_tentativas"] = auditoria_por_snapshot.get("m5_1_tentativas", 0) + total_m5_1_tentativas
+    print(f"[AUDITORIA FLAT] snapshot=m5_1_tentativas linhas={total_m5_1_tentativas}")
+
+    if not PIPELINE_FLAGS["executar_m5_2"]:
+        tempo_total = _duracao_ms(inicio_total)
+        metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
+        print(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
+        return {
+            "status": "ok",
+            "mensagem": "Execução encerrada propositalmente após o M5.1 para auditoria operacional desta etapa.",
+            "pipeline_real_ate": "M5.1",
+            "modo_resposta": "auditoria_m5_1_modular",
+            "resposta_truncada": False,
+            "teste_id_auditoria": teste_id_auditoria,
+            "auditoria_modular": {
+                "teste_id_auditoria": teste_id_auditoria,
+                "modulos": [{"modulo": modulo, "linhas_gravadas": linhas} for modulo, linhas in auditoria_por_modulo.items()],
+                "snapshots": [{"snapshot_nome": snapshot_nome, "linhas_gravadas": linhas} for snapshot_nome, linhas in auditoria_por_snapshot.items()],
+                "colunas_persistidas": sorted(list(auditoria_flat_rastreamento.get("colunas_persistidas", set()))),
+            },
+            "resumo_execucao": {
+                "rodada_id": contexto.rodada_id,
+                "upload_id": contexto.upload_id,
+                "usuario_id": contexto.usuario_id,
+                "filial_id": contexto.filial_id,
+                "tipo_roteirizacao": contexto.tipo_roteirizacao,
+                "data_base_roteirizacao": contexto.data_base.isoformat(),
+                "tempos_ms": metricas_tempo,
+            },
+            "resumo_negocio": {
+                "total_carteira": _safe_len(contexto.df_carteira_raw),
+                "total_enriquecida_m2": _safe_len(df_carteira_enriquecida),
+                "total_triagem_m3": _safe_len(df_carteira_triagem),
+                "total_roteirizavel_m3": _safe_len(df_carteira_roteirizavel),
+                "total_agendamento_futuro_m3": _safe_len(df_carteira_agendamento_futuro),
+                "total_agendas_vencidas_m3": _safe_len(df_carteira_agendas_vencidas),
+                "total_input_bloco_4": _safe_len(df_input_oficial_bloco_4),
+                "total_remanescente_m4": _safe_len(df_remanescente_roteirizavel_bloco_4),
+                "linhas_entrada_m5_1": int(resumo_m5_1.get("linhas_entrada", 0)),
+                "cidades_total_m5_1": int(resumo_m5_1.get("cidades_total", 0)),
+                "cidades_elegiveis_m5_1": int(resumo_m5_1.get("cidades_elegiveis", 0)),
+                "cidades_nao_elegiveis_m5_1": int(resumo_m5_1.get("cidades_nao_elegiveis", 0)),
+                "perfis_testados_total_m5_1": int(resumo_m5_1.get("perfis_testados_total", 0)),
+                "perfis_elegiveis_total_m5_1": int(resumo_m5_1.get("perfis_elegiveis_total", 0)),
+                "perfis_descartados_total_m5_1": int(resumo_m5_1.get("perfis_descartados_total", 0)),
+                "linhas_saldo_elegivel_composicao_m5_1": int(resumo_m5_1.get("linhas_saldo_elegivel_composicao_m5_1", 0)),
+                "linhas_saldo_nao_elegivel_m5_1": int(resumo_m5_1.get("linhas_saldo_nao_elegivel_m5_1", 0)),
+                "resumo_m3": resumo_m3,
+                "resumo_m31": resumo_m31,
+                "resumo_m4": resumo_m4,
+            },
+            "resumo_m5_1": resumo_m5_1,
+            "contexto_rodada": {
+                "filial": contexto.filial,
+                "parametros_rodada": contexto.parametros_rodada,
+            },
+            "logs": logs,
+        }
 
     # =========================================================================================
     # M5.2
