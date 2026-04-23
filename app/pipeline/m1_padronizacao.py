@@ -253,6 +253,76 @@ def _normalizar_data_br_hora(valor: Any) -> Any:
         return pd.NaT
 
 
+def _normalizar_data_agenda(valor: Any) -> tuple[Any, str]:
+    if _is_empty_value(valor):
+        return pd.NaT, "vazio"
+
+    if isinstance(valor, pd.Timestamp):
+        if pd.isna(valor):
+            return pd.NaT, "vazio"
+        return valor, "timestamp"
+
+    if isinstance(valor, datetime):
+        return pd.Timestamp(valor), "datetime"
+
+    texto = str(valor).strip()
+
+    if re.match(r"^\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}$", texto):
+        normalizado = pd.to_datetime(texto, format="%d/%m/%Y %H:%M:%S", errors="coerce")
+        if pd.isna(normalizado):
+            return pd.NaT, "invalido"
+        return normalizado, "br_hora_estrito"
+
+    if re.match(r"^\d{2}/\d{2}/\d{4}$", texto):
+        normalizado = pd.to_datetime(texto, format="%d/%m/%Y", errors="coerce")
+        if pd.isna(normalizado):
+            return pd.NaT, "invalido"
+        return normalizado, "br_data_estrito"
+
+    if "T" in texto or re.match(r"^\d{4}-\d{2}-\d{2}", texto):
+        normalizado = _normalizar_data_iso(texto)
+        if pd.isna(normalizado):
+            return pd.NaT, "invalido"
+        return normalizado, "iso"
+
+    return pd.NaT, "invalido"
+
+
+def _normalizar_data_leadtime(valor: Any) -> tuple[Any, str]:
+    if _is_empty_value(valor):
+        return pd.NaT, "vazio"
+
+    if isinstance(valor, pd.Timestamp):
+        if pd.isna(valor):
+            return pd.NaT, "vazio"
+        return valor, "timestamp"
+
+    if isinstance(valor, datetime):
+        return pd.Timestamp(valor), "datetime"
+
+    texto = str(valor).strip()
+
+    if re.match(r"^\d{2}/\d{2}/\d{4}$", texto):
+        normalizado = pd.to_datetime(texto, format="%d/%m/%Y", errors="coerce")
+        if pd.isna(normalizado):
+            return pd.NaT, "invalido"
+        return normalizado, "br_estrito"
+
+    if re.match(r"^\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}$", texto):
+        normalizado = pd.to_datetime(texto, format="%d/%m/%Y %H:%M:%S", errors="coerce")
+        if pd.isna(normalizado):
+            return pd.NaT, "invalido"
+        return normalizado, "br_hora_estrito"
+
+    if "T" in texto or re.match(r"^\d{4}-\d{2}-\d{2}", texto):
+        normalizado = _normalizar_data_iso(texto)
+        if pd.isna(normalizado):
+            return pd.NaT, "invalido"
+        return normalizado, "iso"
+
+    return pd.NaT, "invalido"
+
+
 def _normalizar_data_mista(valor: Any) -> Any:
     if _is_empty_value(valor):
         return pd.NaT
@@ -314,6 +384,58 @@ def _normalizar_serie_data(df: pd.DataFrame, coluna: str) -> None:
     for pos, i in enumerate(df.index[:5]):
         fmt = formatos[pos] if pos < len(formatos) else "n/a"
         print(f"[NORMALIZACAO DATA] coluna={coluna} original={original.loc[i]} normalizado={df.loc[i, coluna]} formato_detectado={fmt}")
+
+
+def _normalizar_serie_data_agenda(df: pd.DataFrame, coluna: str) -> None:
+    if coluna not in df.columns:
+        return
+
+    original = df[coluna].copy()
+    formatos = []
+
+    def _parse(v: Any) -> Any:
+        normalizado, formato = _normalizar_data_agenda(v)
+        formatos.append(formato)
+        return normalizado
+
+    def _to_log(v: Any) -> Any:
+        if pd.isna(v):
+            return None
+        return v
+
+    df[coluna] = df[coluna].apply(_parse)
+    for pos, i in enumerate(df.index[:5]):
+        fmt = formatos[pos] if pos < len(formatos) else "n/a"
+        print(
+            f"[NORMALIZACAO DATA_AGENDA] original={original.loc[i]} "
+            f"normalizado={_to_log(df.loc[i, coluna])} formato_detectado={fmt}"
+        )
+
+
+def _normalizar_serie_data_leadtime(df: pd.DataFrame, coluna: str) -> None:
+    if coluna not in df.columns:
+        return
+
+    original = df[coluna].copy()
+    formatos = []
+
+    def _parse(v: Any) -> Any:
+        normalizado, formato = _normalizar_data_leadtime(v)
+        formatos.append(formato)
+        return normalizado
+
+    def _to_log(v: Any) -> Any:
+        if pd.isna(v):
+            return None
+        return v
+
+    df[coluna] = df[coluna].apply(_parse)
+    for pos, i in enumerate(df.index[:5]):
+        fmt = formatos[pos] if pos < len(formatos) else "n/a"
+        print(
+            f"[NORMALIZACAO DLE] original={original.loc[i]} "
+            f"normalizado={_to_log(df.loc[i, coluna])} formato_detectado={fmt}"
+        )
 
 
 def _limpar_texto_data(valor: Any) -> Any:
@@ -784,12 +906,12 @@ def executar_m1_padronizacao(
     for c in [
         "data_descarga",
         "data_nf",
-        "data_leadtime",
-        "data_agenda",
         "inicio_entrega",
         "fim_entrega",
     ]:
         _normalizar_serie_data(carteira, c)
+    _normalizar_serie_data_agenda(carteira, "data_agenda")
+    _normalizar_serie_data_leadtime(carteira, "data_leadtime")
 
     for c in ["inicio_entrega", "fim_entrega"]:
         if c in carteira.columns:
