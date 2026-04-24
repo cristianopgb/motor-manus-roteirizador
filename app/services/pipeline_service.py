@@ -30,7 +30,7 @@ PIPELINE_FLAGS = {
     "executar_m5_1": True,
     "executar_m5_2": True,
     "executar_m5_3a": True,
-    "executar_m5_3b": False,
+    "executar_m5_3b": True,
     "executar_m5_4a": False,
     "executar_m5_4b": False,
     "executar_m6_1": False,
@@ -1211,65 +1211,66 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     auditoria_por_snapshot["m5_3a_tentativas"] = auditoria_por_snapshot.get("m5_3a_tentativas", 0) + total_m5_3a_tentativas
     print(f"[AUDITORIA FLAT] snapshot=m5_3a_tentativas linhas={total_m5_3a_tentativas}")
 
-    tempo_total = _duracao_ms(inicio_total)
-    metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
-    print(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
-    return {
-        "status": "ok",
-        "mensagem": "Execução encerrada propositalmente após o M5.3A para auditoria operacional desta etapa.",
-        "pipeline_real_ate": "M5.3A",
-        "modo_resposta": "auditoria_m5_3a_modular",
-        "resposta_truncada": False,
-        "teste_id_auditoria": teste_id_auditoria,
-        "auditoria_modular": {
+    if not PIPELINE_FLAGS["executar_m5_3b"]:
+        tempo_total = _duracao_ms(inicio_total)
+        metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
+        print(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
+        return {
+            "status": "ok",
+            "mensagem": "Execução encerrada propositalmente após o M5.3A para auditoria operacional desta etapa.",
+            "pipeline_real_ate": "M5.3A",
+            "modo_resposta": "auditoria_m5_3a_modular",
+            "resposta_truncada": False,
             "teste_id_auditoria": teste_id_auditoria,
-            "modulos": [{"modulo": modulo, "linhas_gravadas": linhas} for modulo, linhas in auditoria_por_modulo.items()],
-            "snapshots": [{"snapshot_nome": snapshot_nome, "linhas_gravadas": linhas} for snapshot_nome, linhas in auditoria_por_snapshot.items()],
-            "colunas_persistidas": sorted(list(auditoria_flat_rastreamento.get("colunas_persistidas", set()))),
-        },
-        "resumo_execucao": {
-            "rodada_id": contexto.rodada_id,
-            "upload_id": contexto.upload_id,
-            "usuario_id": contexto.usuario_id,
-            "filial_id": contexto.filial_id,
-            "tipo_roteirizacao": contexto.tipo_roteirizacao,
-            "data_base_roteirizacao": contexto.data_base.isoformat(),
-            "tempos_ms": metricas_tempo,
-        },
-        "resumo_negocio": {
-            "total_carteira": _safe_len(contexto.df_carteira_raw),
-            "total_enriquecida_m2": _safe_len(df_carteira_enriquecida),
-            "total_triagem_m3": _safe_len(df_carteira_triagem),
-            "total_roteirizavel_m3": _safe_len(df_carteira_roteirizavel),
-            "total_input_bloco_4": _safe_len(df_input_oficial_bloco_4),
-            "total_manifestos_m4": _safe_len(df_manifestos_m4),
-            "total_itens_manifestados_m4": _safe_len(df_itens_manifestados_m4),
-            "total_remanescente_m4": _safe_len(df_remanescente_roteirizavel_bloco_4),
-            "total_saldo_elegivel_m5_1": _safe_len(df_saldo_elegivel_composicao_m5_1),
-            "total_saldo_nao_elegivel_m5_1": _safe_len(df_saldo_nao_elegivel_m5_1),
-            "total_premanifestos_m5_2": _safe_len(df_premanifestos_m5_2),
-            "total_itens_premanifestados_m5_2": _safe_len(df_itens_premanifestos_m5_2),
-            "total_remanescente_m5_2": _safe_len(df_remanescente_m5_2),
-            "total_remanescente_global_ate_m5_2": _safe_len(df_remanescente_global_ate_m5_2),
-            "total_tentativas_m5_2": _safe_len(df_tentativas_m5_2),
-            "total_saldo_elegivel_m5_3": _safe_len(df_saldo_elegivel_composicao_m5_3),
-            "total_saldo_nao_elegivel_m5_3": _safe_len(df_saldo_nao_elegivel_m5_3),
-            "linhas_entrada_m5_3": resumo_m5_3a.get("linhas_entrada", 0),
-            "subregioes_total_m5_3": resumo_m5_3a.get("subregioes_total", 0),
-            "subregioes_elegiveis_m5_3": resumo_m5_3a.get("subregioes_elegiveis", 0),
-            "subregioes_nao_elegiveis_m5_3": resumo_m5_3a.get("subregioes_nao_elegiveis", 0),
-            "perfis_testados_total_m5_3": resumo_m5_3a.get("perfis_testados_total", 0),
-            "perfis_elegiveis_total_m5_3": resumo_m5_3a.get("perfis_elegiveis_total", 0),
-            "perfis_descartados_total_m5_3": resumo_m5_3a.get("perfis_descartados_total", 0),
-            "linhas_saldo_elegivel_composicao_m5_3": resumo_m5_3a.get("linhas_saldo_elegivel_composicao_m5_3", 0),
-            "linhas_saldo_nao_elegivel_m5_3": resumo_m5_3a.get("linhas_saldo_nao_elegivel_m5_3", 0),
-        },
-        "resumo_m4": resumo_m4,
-        "resumo_m5_1": resumo_m5_1,
-        "resumo_m5_2": resumo_m5_2,
-        "resumo_m5_3": resumo_m5_3a,
-        "logs": logs,
-    }
+            "auditoria_modular": {
+                "teste_id_auditoria": teste_id_auditoria,
+                "modulos": [{"modulo": modulo, "linhas_gravadas": linhas} for modulo, linhas in auditoria_por_modulo.items()],
+                "snapshots": [{"snapshot_nome": snapshot_nome, "linhas_gravadas": linhas} for snapshot_nome, linhas in auditoria_por_snapshot.items()],
+                "colunas_persistidas": sorted(list(auditoria_flat_rastreamento.get("colunas_persistidas", set()))),
+            },
+            "resumo_execucao": {
+                "rodada_id": contexto.rodada_id,
+                "upload_id": contexto.upload_id,
+                "usuario_id": contexto.usuario_id,
+                "filial_id": contexto.filial_id,
+                "tipo_roteirizacao": contexto.tipo_roteirizacao,
+                "data_base_roteirizacao": contexto.data_base.isoformat(),
+                "tempos_ms": metricas_tempo,
+            },
+            "resumo_negocio": {
+                "total_carteira": _safe_len(contexto.df_carteira_raw),
+                "total_enriquecida_m2": _safe_len(df_carteira_enriquecida),
+                "total_triagem_m3": _safe_len(df_carteira_triagem),
+                "total_roteirizavel_m3": _safe_len(df_carteira_roteirizavel),
+                "total_input_bloco_4": _safe_len(df_input_oficial_bloco_4),
+                "total_manifestos_m4": _safe_len(df_manifestos_m4),
+                "total_itens_manifestados_m4": _safe_len(df_itens_manifestados_m4),
+                "total_remanescente_m4": _safe_len(df_remanescente_roteirizavel_bloco_4),
+                "total_saldo_elegivel_m5_1": _safe_len(df_saldo_elegivel_composicao_m5_1),
+                "total_saldo_nao_elegivel_m5_1": _safe_len(df_saldo_nao_elegivel_m5_1),
+                "total_premanifestos_m5_2": _safe_len(df_premanifestos_m5_2),
+                "total_itens_premanifestados_m5_2": _safe_len(df_itens_premanifestos_m5_2),
+                "total_remanescente_m5_2": _safe_len(df_remanescente_m5_2),
+                "total_remanescente_global_ate_m5_2": _safe_len(df_remanescente_global_ate_m5_2),
+                "total_tentativas_m5_2": _safe_len(df_tentativas_m5_2),
+                "total_saldo_elegivel_m5_3": _safe_len(df_saldo_elegivel_composicao_m5_3),
+                "total_saldo_nao_elegivel_m5_3": _safe_len(df_saldo_nao_elegivel_m5_3),
+                "linhas_entrada_m5_3": resumo_m5_3a.get("linhas_entrada", 0),
+                "subregioes_total_m5_3": resumo_m5_3a.get("subregioes_total", 0),
+                "subregioes_elegiveis_m5_3": resumo_m5_3a.get("subregioes_elegiveis", 0),
+                "subregioes_nao_elegiveis_m5_3": resumo_m5_3a.get("subregioes_nao_elegiveis", 0),
+                "perfis_testados_total_m5_3": resumo_m5_3a.get("perfis_testados_total", 0),
+                "perfis_elegiveis_total_m5_3": resumo_m5_3a.get("perfis_elegiveis_total", 0),
+                "perfis_descartados_total_m5_3": resumo_m5_3a.get("perfis_descartados_total", 0),
+                "linhas_saldo_elegivel_composicao_m5_3": resumo_m5_3a.get("linhas_saldo_elegivel_composicao_m5_3", 0),
+                "linhas_saldo_nao_elegivel_m5_3": resumo_m5_3a.get("linhas_saldo_nao_elegivel_m5_3", 0),
+            },
+            "resumo_m4": resumo_m4,
+            "resumo_m5_1": resumo_m5_1,
+            "resumo_m5_2": resumo_m5_2,
+            "resumo_m5_3": resumo_m5_3a,
+            "logs": logs,
+        }
 
     # =========================================================================================
     # M5.3B
@@ -1388,15 +1389,21 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     auditoria_por_snapshot["m5_3_tentativas"] = auditoria_por_snapshot.get("m5_3_tentativas", 0) + total_m5_3_tentativas
     print(f"[AUDITORIA FLAT] snapshot=m5_3_tentativas linhas={total_m5_3_tentativas}")
 
+    df_remanescente_global_ate_m5_3 = _consolidar_remanescente_global(
+        df_saldo_nao_elegivel_m5_3,
+        df_remanescente_m5_3,
+    )
+    print(f"[M5.3B] df_remanescente_global_ate_m5_3 linhas={_safe_len(df_remanescente_global_ate_m5_3)}")
+
     if not PIPELINE_FLAGS["executar_m5_4a"]:
         tempo_total = _duracao_ms(inicio_total)
         metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
         print(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
         return {
             "status": "ok",
-            "mensagem": "Execução encerrada propositalmente após o M5.3 para auditoria operacional desta etapa.",
-            "pipeline_real_ate": "M5.3",
-            "modo_resposta": "auditoria_m5_3_modular",
+            "mensagem": "Execução encerrada propositalmente após o M5.3B para auditoria operacional desta etapa.",
+            "pipeline_real_ate": "M5.3B",
+            "modo_resposta": "auditoria_m5_3b_modular",
             "resposta_truncada": False,
             "teste_id_auditoria": teste_id_auditoria,
             "auditoria_modular": {
@@ -1436,6 +1443,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
                 "total_itens_premanifestados_m5_3": _safe_len(df_itens_premanifestos_m5_3),
                 "total_remanescente_m5_3": _safe_len(df_remanescente_m5_3),
                 "total_tentativas_m5_3": _safe_len(df_tentativas_m5_3),
+                "total_remanescente_global_ate_m5_3": _safe_len(df_remanescente_global_ate_m5_3),
             },
             "resumo_m4": resumo_m4,
             "resumo_m5_1": resumo_m5_1,
@@ -1448,10 +1456,6 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # =========================================================================================
     # M5.4A
     # =========================================================================================
-    df_remanescente_global_ate_m5_3 = _consolidar_remanescente_global(
-        df_saldo_nao_elegivel_m5_3,
-        df_remanescente_m5_3,
-    )
     t0 = _agora()
     print(
         "[M5.4A] executando M5.4A com remanescente global ate M5.3 "
