@@ -229,19 +229,6 @@ def persistir_snapshot_modulo_auditoria(
         return 0
 
     payload_insert: List[Dict[str, Any]] = []
-    colunas_fixas_tabela = {
-        "teste_id",
-        "rodada_id",
-        "upload_id",
-        "modulo",
-        "ordem_modulo",
-        "snapshot_nome",
-        "chave_linha_dataset",
-        "id_linha_pipeline",
-        "manifesto_id",
-        "payload_linha_json",
-        "campos_auditoria_json",
-    }
     for idx, row in enumerate(rows):
         row_sanitizada = _normalizar_row_snapshot(row)
         row_sanitizada = _normalizar_chaves_snapshot(row_sanitizada)
@@ -268,11 +255,6 @@ def persistir_snapshot_modulo_auditoria(
                 "snapshot_em": datetime.utcnow().isoformat() + "Z",
             },
         }
-        for coluna in COLUNAS_AUDITORIA_FLAT:
-            coluna_normalizada = _normalizar_nome_coluna_auditoria(coluna)
-            if coluna_normalizada in row_sanitizada and coluna_normalizada not in colunas_fixas_tabela:
-                registro[coluna] = _normalizar_valor_flat(row_sanitizada.get(coluna_normalizada))
-                rastreamento.setdefault("colunas_persistidas", set()).add(coluna)
         payload_insert.append(registro)
 
     supabase_url, supabase_key = _config_supabase()
