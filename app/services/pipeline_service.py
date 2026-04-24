@@ -31,7 +31,7 @@ PIPELINE_FLAGS = {
     "executar_m5_2": True,
     "executar_m5_3a": True,
     "executar_m5_3b": True,
-    "executar_m5_4a": False,
+    "executar_m5_4a": True,
     "executar_m5_4b": False,
     "executar_m6_1": False,
     "executar_m6_2": False,
@@ -1471,9 +1471,19 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     resumo_m5_4a = meta_m5_4a["resumo_m5_4a"]
 
     df_mesorregioes_consolidadas_m5_4 = outputs_m5_4a["df_mesorregioes_consolidadas_m5_4"]
+    df_perfis_viaveis_por_mesorregiao_m5_4 = outputs_m5_4a["df_perfis_viaveis_por_mesorregiao_m5_4"]
     df_perfis_elegiveis_por_mesorregiao_m5_4 = outputs_m5_4a["df_perfis_elegiveis_por_mesorregiao_m5_4"]
+    df_perfis_descartados_por_mesorregiao_m5_4 = outputs_m5_4a["df_perfis_descartados_por_mesorregiao_m5_4"]
     df_saldo_elegivel_composicao_m5_4 = outputs_m5_4a["df_saldo_elegivel_composicao_m5_4"]
+    df_saldo_nao_elegivel_m5_4 = outputs_m5_4a["df_saldo_nao_elegivel_m5_4"]
     df_tentativas_triagem_mesorregioes_m5_4 = outputs_m5_4a["df_tentativas_triagem_mesorregioes_m5_4"]
+
+    print(f"[M5.4A] df_mesorregioes_consolidadas_m5_4 linhas={_safe_len(df_mesorregioes_consolidadas_m5_4)}")
+    print(f"[M5.4A] df_perfis_elegiveis_por_mesorregiao_m5_4 linhas={_safe_len(df_perfis_elegiveis_por_mesorregiao_m5_4)}")
+    print(f"[M5.4A] df_perfis_descartados_por_mesorregiao_m5_4 linhas={_safe_len(df_perfis_descartados_por_mesorregiao_m5_4)}")
+    print(f"[M5.4A] df_saldo_elegivel_composicao_m5_4 linhas={_safe_len(df_saldo_elegivel_composicao_m5_4)}")
+    print(f"[M5.4A] df_saldo_nao_elegivel_m5_4 linhas={_safe_len(df_saldo_nao_elegivel_m5_4)}")
+    print(f"[M5.4A] df_tentativas_triagem_mesorregioes_m5_4 linhas={_safe_len(df_tentativas_triagem_mesorregioes_m5_4)}")
 
     logs.append(
         _log(
@@ -1488,11 +1498,180 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
                 "total_saldo_nao_elegivel_m5_3": _safe_len(df_saldo_nao_elegivel_m5_3),
                 "total_remanescente_m5_3": _safe_len(df_remanescente_m5_3),
                 "total_remanescente_global_ate_m5_3": _safe_len(df_remanescente_global_ate_m5_3),
-                "total_mesorregioes_consolidadas_m5_4": _safe_len(df_mesorregioes_consolidadas_m5_4),
-                "total_tentativas_triagem_mesorregioes_m5_4": _safe_len(df_tentativas_triagem_mesorregioes_m5_4),
+                "total_mesorregioes_m5_4a": _safe_len(df_mesorregioes_consolidadas_m5_4),
+                "total_saldo_elegivel_m5_4": _safe_len(df_saldo_elegivel_composicao_m5_4),
+                "total_saldo_nao_elegivel_m5_4": _safe_len(df_saldo_nao_elegivel_m5_4),
+                "total_tentativas_m5_4": _safe_len(df_tentativas_triagem_mesorregioes_m5_4),
             },
         )
     )
+
+    total_m5_4a_mesorregioes_consolidadas = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m5_4a_triagem_mesorregioes",
+        ordem_modulo=11,
+        df_etapa=df_mesorregioes_consolidadas_m5_4,
+        snapshot_nome="m5_4a_mesorregioes_consolidadas",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m5_4a_triagem_mesorregioes"] = auditoria_por_modulo.get("m5_4a_triagem_mesorregioes", 0) + total_m5_4a_mesorregioes_consolidadas
+    auditoria_por_snapshot["m5_4a_mesorregioes_consolidadas"] = auditoria_por_snapshot.get("m5_4a_mesorregioes_consolidadas", 0) + total_m5_4a_mesorregioes_consolidadas
+    print(f"[AUDITORIA FLAT] snapshot=m5_4a_mesorregioes_consolidadas linhas={total_m5_4a_mesorregioes_consolidadas}")
+
+    total_m5_4a_perfis_viaveis = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m5_4a_triagem_mesorregioes",
+        ordem_modulo=11,
+        df_etapa=df_perfis_viaveis_por_mesorregiao_m5_4,
+        snapshot_nome="m5_4a_perfis_viaveis",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m5_4a_triagem_mesorregioes"] = auditoria_por_modulo.get("m5_4a_triagem_mesorregioes", 0) + total_m5_4a_perfis_viaveis
+    auditoria_por_snapshot["m5_4a_perfis_viaveis"] = auditoria_por_snapshot.get("m5_4a_perfis_viaveis", 0) + total_m5_4a_perfis_viaveis
+    print(f"[AUDITORIA FLAT] snapshot=m5_4a_perfis_viaveis linhas={total_m5_4a_perfis_viaveis}")
+
+    total_m5_4a_perfis_elegiveis = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m5_4a_triagem_mesorregioes",
+        ordem_modulo=11,
+        df_etapa=df_perfis_elegiveis_por_mesorregiao_m5_4,
+        snapshot_nome="m5_4a_perfis_elegiveis",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m5_4a_triagem_mesorregioes"] = auditoria_por_modulo.get("m5_4a_triagem_mesorregioes", 0) + total_m5_4a_perfis_elegiveis
+    auditoria_por_snapshot["m5_4a_perfis_elegiveis"] = auditoria_por_snapshot.get("m5_4a_perfis_elegiveis", 0) + total_m5_4a_perfis_elegiveis
+    print(f"[AUDITORIA FLAT] snapshot=m5_4a_perfis_elegiveis linhas={total_m5_4a_perfis_elegiveis}")
+
+    total_m5_4a_perfis_descartados = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m5_4a_triagem_mesorregioes",
+        ordem_modulo=11,
+        df_etapa=df_perfis_descartados_por_mesorregiao_m5_4,
+        snapshot_nome="m5_4a_perfis_descartados",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m5_4a_triagem_mesorregioes"] = auditoria_por_modulo.get("m5_4a_triagem_mesorregioes", 0) + total_m5_4a_perfis_descartados
+    auditoria_por_snapshot["m5_4a_perfis_descartados"] = auditoria_por_snapshot.get("m5_4a_perfis_descartados", 0) + total_m5_4a_perfis_descartados
+    print(f"[AUDITORIA FLAT] snapshot=m5_4a_perfis_descartados linhas={total_m5_4a_perfis_descartados}")
+
+    total_m5_4a_saldo_elegivel = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m5_4a_triagem_mesorregioes",
+        ordem_modulo=11,
+        df_etapa=df_saldo_elegivel_composicao_m5_4,
+        snapshot_nome="m5_4a_saldo_elegivel",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m5_4a_triagem_mesorregioes"] = auditoria_por_modulo.get("m5_4a_triagem_mesorregioes", 0) + total_m5_4a_saldo_elegivel
+    auditoria_por_snapshot["m5_4a_saldo_elegivel"] = auditoria_por_snapshot.get("m5_4a_saldo_elegivel", 0) + total_m5_4a_saldo_elegivel
+    print(f"[AUDITORIA FLAT] snapshot=m5_4a_saldo_elegivel linhas={total_m5_4a_saldo_elegivel}")
+
+    total_m5_4a_saldo_nao_elegivel = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m5_4a_triagem_mesorregioes",
+        ordem_modulo=11,
+        df_etapa=df_saldo_nao_elegivel_m5_4,
+        snapshot_nome="m5_4a_saldo_nao_elegivel",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m5_4a_triagem_mesorregioes"] = auditoria_por_modulo.get("m5_4a_triagem_mesorregioes", 0) + total_m5_4a_saldo_nao_elegivel
+    auditoria_por_snapshot["m5_4a_saldo_nao_elegivel"] = auditoria_por_snapshot.get("m5_4a_saldo_nao_elegivel", 0) + total_m5_4a_saldo_nao_elegivel
+    print(f"[AUDITORIA FLAT] snapshot=m5_4a_saldo_nao_elegivel linhas={total_m5_4a_saldo_nao_elegivel}")
+
+    total_m5_4a_tentativas = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m5_4a_triagem_mesorregioes",
+        ordem_modulo=11,
+        df_etapa=df_tentativas_triagem_mesorregioes_m5_4,
+        snapshot_nome="m5_4a_tentativas",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m5_4a_triagem_mesorregioes"] = auditoria_por_modulo.get("m5_4a_triagem_mesorregioes", 0) + total_m5_4a_tentativas
+    auditoria_por_snapshot["m5_4a_tentativas"] = auditoria_por_snapshot.get("m5_4a_tentativas", 0) + total_m5_4a_tentativas
+    print(f"[AUDITORIA FLAT] snapshot=m5_4a_tentativas linhas={total_m5_4a_tentativas}")
+
+    if not PIPELINE_FLAGS["executar_m5_4b"]:
+        tempo_total = _duracao_ms(inicio_total)
+        metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
+        print(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
+        return {
+            "status": "ok",
+            "mensagem": "Execucao encerrada propositalmente apos o M5.4A para auditoria operacional desta etapa.",
+            "pipeline_real_ate": "M5.4A",
+            "modo_resposta": "auditoria_m5_4a_modular",
+            "resposta_truncada": False,
+            "teste_id_auditoria": teste_id_auditoria,
+            "auditoria_modular": {
+                "teste_id_auditoria": teste_id_auditoria,
+                "modulos": [{"modulo": modulo, "linhas_gravadas": linhas} for modulo, linhas in auditoria_por_modulo.items()],
+                "snapshots": [{"snapshot_nome": snapshot_nome, "linhas_gravadas": linhas} for snapshot_nome, linhas in auditoria_por_snapshot.items()],
+                "colunas_persistidas": sorted(list(auditoria_flat_rastreamento.get("colunas_persistidas", set()))),
+            },
+            "resumo_execucao": {
+                "rodada_id": contexto.rodada_id,
+                "upload_id": contexto.upload_id,
+                "usuario_id": contexto.usuario_id,
+                "filial_id": contexto.filial_id,
+                "tipo_roteirizacao": contexto.tipo_roteirizacao,
+                "data_base_roteirizacao": contexto.data_base.isoformat(),
+                "tempos_ms": metricas_tempo,
+            },
+            "resumo_negocio": {
+                "total_carteira": _safe_len(contexto.df_carteira_raw),
+                "total_enriquecida_m2": _safe_len(df_carteira_enriquecida),
+                "total_triagem_m3": _safe_len(df_carteira_triagem),
+                "total_roteirizavel_m3": _safe_len(df_carteira_roteirizavel),
+                "total_input_bloco_4": _safe_len(df_input_oficial_bloco_4),
+                "total_manifestos_m4": _safe_len(df_manifestos_m4),
+                "total_itens_manifestados_m4": _safe_len(df_itens_manifestados_m4),
+                "total_remanescente_m4": _safe_len(df_remanescente_roteirizavel_bloco_4),
+                "total_saldo_elegivel_m5_1": _safe_len(df_saldo_elegivel_composicao_m5_1),
+                "total_saldo_nao_elegivel_m5_1": _safe_len(df_saldo_nao_elegivel_m5_1),
+                "total_premanifestos_m5_2": _safe_len(df_premanifestos_m5_2),
+                "total_itens_premanifestados_m5_2": _safe_len(df_itens_premanifestos_m5_2),
+                "total_remanescente_m5_2": _safe_len(df_remanescente_m5_2),
+                "total_tentativas_m5_2": _safe_len(df_tentativas_m5_2),
+                "total_saldo_elegivel_m5_3": _safe_len(df_saldo_elegivel_composicao_m5_3),
+                "total_saldo_nao_elegivel_m5_3": _safe_len(df_saldo_nao_elegivel_m5_3),
+                "total_premanifestos_m5_3": _safe_len(df_premanifestos_m5_3),
+                "total_itens_premanifestados_m5_3": _safe_len(df_itens_premanifestos_m5_3),
+                "total_remanescente_m5_3": _safe_len(df_remanescente_m5_3),
+                "total_tentativas_m5_3": _safe_len(df_tentativas_m5_3),
+                "total_remanescente_global_ate_m5_3": _safe_len(df_remanescente_global_ate_m5_3),
+                "total_mesorregioes_m5_4a": _safe_len(df_mesorregioes_consolidadas_m5_4),
+                "total_saldo_elegivel_m5_4": _safe_len(df_saldo_elegivel_composicao_m5_4),
+                "total_saldo_nao_elegivel_m5_4": _safe_len(df_saldo_nao_elegivel_m5_4),
+                "total_tentativas_m5_4": _safe_len(df_tentativas_triagem_mesorregioes_m5_4),
+            },
+            "resumo_m4": resumo_m4,
+            "resumo_m5_1": resumo_m5_1,
+            "resumo_m5_2": resumo_m5_2,
+            "resumo_m5_3a": resumo_m5_3a,
+            "resumo_m5_3b": resumo_m5_3b,
+            "resumo_m5_4a": resumo_m5_4a,
+            "logs": logs,
+        }
 
     # =========================================================================================
     # M5.4B
