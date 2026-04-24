@@ -33,7 +33,7 @@ PIPELINE_FLAGS = {
     "executar_m5_3b": True,
     "executar_m5_4a": True,
     "executar_m5_4b": True,
-    "executar_m6_1": False,
+    "executar_m6_1": True,
     "executar_m6_2": False,
     "executar_m7": False,
 }
@@ -1876,16 +1876,33 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # =========================================================================================
     # M6.1
     # =========================================================================================
+    df_manifestos_m4_m6_1 = _copiar_ou_vazio(df_manifestos_m4)
+    df_itens_manifestados_m4_m6_1 = _copiar_ou_vazio(df_itens_manifestados_m4)
+    df_premanifestos_m5_2_m6_1 = _copiar_ou_vazio(df_premanifestos_m5_2)
+    df_itens_premanifestos_m5_2_m6_1 = _copiar_ou_vazio(df_itens_premanifestos_m5_2)
+    df_premanifestos_m5_3_m6_1 = _copiar_ou_vazio(df_premanifestos_m5_3)
+    df_itens_premanifestos_m5_3_m6_1 = _copiar_ou_vazio(df_itens_premanifestos_m5_3)
+    df_premanifestos_m5_4_m6_1 = _copiar_ou_vazio(df_premanifestos_m5_4)
+    df_itens_premanifestos_m5_4_m6_1 = _copiar_ou_vazio(df_itens_premanifestos_m5_4)
+    print("[M6.1] executando M6.1 com:")
+    print(f"[M6.1] df_manifestos_m4 linhas={_safe_len(df_manifestos_m4_m6_1)}")
+    print(f"[M6.1] df_itens_manifestados_m4 linhas={_safe_len(df_itens_manifestados_m4_m6_1)}")
+    print(f"[M6.1] df_premanifestos_m5_2 linhas={_safe_len(df_premanifestos_m5_2_m6_1)}")
+    print(f"[M6.1] df_itens_premanifestos_m5_2 linhas={_safe_len(df_itens_premanifestos_m5_2_m6_1)}")
+    print(f"[M6.1] df_premanifestos_m5_3 linhas={_safe_len(df_premanifestos_m5_3_m6_1)}")
+    print(f"[M6.1] df_itens_premanifestos_m5_3 linhas={_safe_len(df_itens_premanifestos_m5_3_m6_1)}")
+    print(f"[M6.1] df_premanifestos_m5_4 linhas={_safe_len(df_premanifestos_m5_4_m6_1)}")
+    print(f"[M6.1] df_itens_premanifestos_m5_4 linhas={_safe_len(df_itens_premanifestos_m5_4_m6_1)}")
     t0 = _agora()
     outputs_m6_1, meta_m6_1 = executar_m6_1_consolidacao_manifestos(
-        df_manifestos_m4=df_manifestos_m4,
-        df_itens_manifestados_m4=df_itens_manifestados_m4,
-        df_premanifestos_m5_2=df_premanifestos_m5_2,
-        df_itens_premanifestos_m5_2=df_itens_premanifestos_m5_2,
-        df_premanifestos_m5_3=df_premanifestos_m5_3,
-        df_itens_premanifestos_m5_3=df_itens_premanifestos_m5_3,
-        df_premanifestos_m5_4=df_premanifestos_m5_4,
-        df_itens_premanifestos_m5_4=df_itens_premanifestos_m5_4,
+        df_manifestos_m4=df_manifestos_m4_m6_1,
+        df_itens_manifestados_m4=df_itens_manifestados_m4_m6_1,
+        df_premanifestos_m5_2=df_premanifestos_m5_2_m6_1,
+        df_itens_premanifestos_m5_2=df_itens_premanifestos_m5_2_m6_1,
+        df_premanifestos_m5_3=df_premanifestos_m5_3_m6_1,
+        df_itens_premanifestos_m5_3=df_itens_premanifestos_m5_3_m6_1,
+        df_premanifestos_m5_4=df_premanifestos_m5_4_m6_1,
+        df_itens_premanifestos_m5_4=df_itens_premanifestos_m5_4_m6_1,
         data_base_roteirizacao=contexto.data_base,
         tipo_roteirizacao=contexto.tipo_roteirizacao,
         caminhos_pipeline=contexto.caminhos_pipeline,
@@ -1898,6 +1915,10 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     df_itens_manifestos_base_m6 = outputs_m6_1["df_itens_manifestos_base_m6"]
     df_estatisticas_manifestos_antes_m6 = outputs_m6_1["df_estatisticas_manifestos_antes_m6"]
     df_pares_elegiveis_otimizacao_m6 = outputs_m6_1["df_pares_elegiveis_otimizacao_m6"]
+    print(f"[M6.1] df_manifestos_base_m6 linhas={_safe_len(df_manifestos_base_m6)}")
+    print(f"[M6.1] df_itens_manifestos_base_m6 linhas={_safe_len(df_itens_manifestos_base_m6)}")
+    print(f"[M6.1] df_estatisticas_manifestos_antes_m6 linhas={_safe_len(df_estatisticas_manifestos_antes_m6)}")
+    print(f"[M6.1] df_pares_elegiveis_otimizacao_m6 linhas={_safe_len(df_pares_elegiveis_otimizacao_m6)}")
 
     logs.append(
         _log(
@@ -1920,6 +1941,139 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             },
         )
     )
+
+    total_m6_1_manifestos_base = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m6_1_consolidacao_manifestos",
+        ordem_modulo=13,
+        df_etapa=df_manifestos_base_m6,
+        snapshot_nome="m6_1_manifestos_base",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m6_1_consolidacao_manifestos"] = auditoria_por_modulo.get("m6_1_consolidacao_manifestos", 0) + total_m6_1_manifestos_base
+    auditoria_por_snapshot["m6_1_manifestos_base"] = auditoria_por_snapshot.get("m6_1_manifestos_base", 0) + total_m6_1_manifestos_base
+    print(f"[AUDITORIA FLAT] snapshot=m6_1_manifestos_base linhas={total_m6_1_manifestos_base}")
+
+    total_m6_1_itens_manifestos_base = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m6_1_consolidacao_manifestos",
+        ordem_modulo=13,
+        df_etapa=df_itens_manifestos_base_m6,
+        snapshot_nome="m6_1_itens_manifestos_base",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m6_1_consolidacao_manifestos"] = auditoria_por_modulo.get("m6_1_consolidacao_manifestos", 0) + total_m6_1_itens_manifestos_base
+    auditoria_por_snapshot["m6_1_itens_manifestos_base"] = auditoria_por_snapshot.get("m6_1_itens_manifestos_base", 0) + total_m6_1_itens_manifestos_base
+    print(f"[AUDITORIA FLAT] snapshot=m6_1_itens_manifestos_base linhas={total_m6_1_itens_manifestos_base}")
+
+    total_m6_1_estatisticas = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m6_1_consolidacao_manifestos",
+        ordem_modulo=13,
+        df_etapa=df_estatisticas_manifestos_antes_m6,
+        snapshot_nome="m6_1_estatisticas_manifestos",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m6_1_consolidacao_manifestos"] = auditoria_por_modulo.get("m6_1_consolidacao_manifestos", 0) + total_m6_1_estatisticas
+    auditoria_por_snapshot["m6_1_estatisticas_manifestos"] = auditoria_por_snapshot.get("m6_1_estatisticas_manifestos", 0) + total_m6_1_estatisticas
+    print(f"[AUDITORIA FLAT] snapshot=m6_1_estatisticas_manifestos linhas={total_m6_1_estatisticas}")
+
+    total_m6_1_pares = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m6_1_consolidacao_manifestos",
+        ordem_modulo=13,
+        df_etapa=df_pares_elegiveis_otimizacao_m6,
+        snapshot_nome="m6_1_pares_elegiveis_otimizacao",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m6_1_consolidacao_manifestos"] = auditoria_por_modulo.get("m6_1_consolidacao_manifestos", 0) + total_m6_1_pares
+    auditoria_por_snapshot["m6_1_pares_elegiveis_otimizacao"] = auditoria_por_snapshot.get("m6_1_pares_elegiveis_otimizacao", 0) + total_m6_1_pares
+    print(f"[AUDITORIA FLAT] snapshot=m6_1_pares_elegiveis_otimizacao linhas={total_m6_1_pares}")
+
+    if not PIPELINE_FLAGS["executar_m6_2"]:
+        tempo_total = _duracao_ms(inicio_total)
+        metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
+        print(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
+        return {
+            "status": "ok",
+            "mensagem": "Execucao encerrada propositalmente apos o M6.1 para auditoria da consolidacao de manifestos.",
+            "pipeline_real_ate": "M6.1",
+            "modo_resposta": "auditoria_m6_1_modular",
+            "resposta_truncada": False,
+            "teste_id_auditoria": teste_id_auditoria,
+            "auditoria_modular": {
+                "teste_id_auditoria": teste_id_auditoria,
+                "modulos": [{"modulo": modulo, "linhas_gravadas": linhas} for modulo, linhas in auditoria_por_modulo.items()],
+                "snapshots": [{"snapshot_nome": snapshot_nome, "linhas_gravadas": linhas} for snapshot_nome, linhas in auditoria_por_snapshot.items()],
+                "colunas_persistidas": sorted(list(auditoria_flat_rastreamento.get("colunas_persistidas", set()))),
+            },
+            "resumo_execucao": {
+                "rodada_id": contexto.rodada_id,
+                "upload_id": contexto.upload_id,
+                "usuario_id": contexto.usuario_id,
+                "filial_id": contexto.filial_id,
+                "tipo_roteirizacao": contexto.tipo_roteirizacao,
+                "data_base_roteirizacao": contexto.data_base.isoformat(),
+                "tempos_ms": metricas_tempo,
+            },
+            "resumo_negocio": {
+                "total_carteira": _safe_len(contexto.df_carteira_raw),
+                "total_enriquecida_m2": _safe_len(df_carteira_enriquecida),
+                "total_triagem_m3": _safe_len(df_carteira_triagem),
+                "total_roteirizavel_m3": _safe_len(df_carteira_roteirizavel),
+                "total_input_bloco_4": _safe_len(df_input_oficial_bloco_4),
+                "total_manifestos_m4": _safe_len(df_manifestos_m4),
+                "total_itens_manifestados_m4": _safe_len(df_itens_manifestados_m4),
+                "total_remanescente_m4": _safe_len(df_remanescente_roteirizavel_bloco_4),
+                "total_saldo_elegivel_m5_1": _safe_len(df_saldo_elegivel_composicao_m5_1),
+                "total_saldo_nao_elegivel_m5_1": _safe_len(df_saldo_nao_elegivel_m5_1),
+                "total_premanifestos_m5_2": _safe_len(df_premanifestos_m5_2),
+                "total_itens_premanifestados_m5_2": _safe_len(df_itens_premanifestos_m5_2),
+                "total_remanescente_m5_2": _safe_len(df_remanescente_m5_2),
+                "total_tentativas_m5_2": _safe_len(df_tentativas_m5_2),
+                "total_saldo_elegivel_m5_3": _safe_len(df_saldo_elegivel_composicao_m5_3),
+                "total_saldo_nao_elegivel_m5_3": _safe_len(df_saldo_nao_elegivel_m5_3),
+                "total_premanifestos_m5_3": _safe_len(df_premanifestos_m5_3),
+                "total_itens_premanifestados_m5_3": _safe_len(df_itens_premanifestos_m5_3),
+                "total_remanescente_m5_3": _safe_len(df_remanescente_m5_3),
+                "total_tentativas_m5_3": _safe_len(df_tentativas_m5_3),
+                "total_remanescente_global_ate_m5_3": _safe_len(df_remanescente_global_ate_m5_3),
+                "total_mesorregioes_m5_4a": _safe_len(df_mesorregioes_consolidadas_m5_4),
+                "total_saldo_elegivel_m5_4": _safe_len(df_saldo_elegivel_composicao_m5_4),
+                "total_saldo_nao_elegivel_m5_4": _safe_len(df_saldo_nao_elegivel_m5_4),
+                "total_tentativas_m5_4a": _safe_len(df_tentativas_triagem_mesorregioes_m5_4),
+                "total_premanifestos_m5_4": _safe_len(df_premanifestos_m5_4),
+                "total_itens_premanifestados_m5_4": _safe_len(df_itens_premanifestos_m5_4),
+                "total_remanescente_m5_4": _safe_len(df_remanescente_m5_4),
+                "total_tentativas_m5_4": _safe_len(df_tentativas_m5_4),
+                "total_remanescente_global_final_roteirizacao": _safe_len(df_remanescente_global_final_roteirizacao),
+                "total_manifestos_base_m6": _safe_len(df_manifestos_base_m6),
+                "total_itens_manifestos_base_m6": _safe_len(df_itens_manifestos_base_m6),
+                "total_estatisticas_manifestos_m6": _safe_len(df_estatisticas_manifestos_antes_m6),
+                "total_pares_elegiveis_otimizacao_m6": _safe_len(df_pares_elegiveis_otimizacao_m6),
+            },
+            "resumo_m4": resumo_m4,
+            "resumo_m5_1": resumo_m5_1,
+            "resumo_m5_2": resumo_m5_2,
+            "resumo_m5_3a": resumo_m5_3a,
+            "resumo_m5_3b": resumo_m5_3b,
+            "resumo_m5_4a": resumo_m5_4a,
+            "resumo_m5_4b": resumo_m5_4b,
+            "resumo_m6_1": resumo_m6_1,
+            "logs": logs,
+        }
 
     # =========================================================================================
     # M6.2
