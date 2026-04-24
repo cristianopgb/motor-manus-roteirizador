@@ -65,6 +65,10 @@ COLUNAS_AUDITORIA_FLAT: List[str] = [
     "tentativa_idx", "blocos_considerados", "veiculo_tipo_tentado", "veiculo_perfil_tentado", "resultado",
     "motivo", "qtd_itens_candidato", "qtd_paradas_candidato", "peso_total_candidato", "peso_kg_total_candidato",
     "volume_total_candidato", "km_referencia_candidato", "ocupacao_perc_candidato",
+    "origem_manifesto_modulo", "origem_manifesto_tipo", "texto_exclusivo_detectado_m6", "peso_base_antes_m6",
+    "km_base_antes_m6", "ocupacao_base_antes_m6", "qtd_itens_base_antes_m6", "qtd_ctes_base_antes_m6",
+    "qtd_paradas_base_antes_m6", "manifesto_a", "manifesto_b", "mesmo_perfil_flag", "mesma_mesorregiao_flag",
+    "score_ocupacao", "score_km", "score_prioridade_m6", "elegivel_otimizacao_m6", "motivo_elegibilidade_m6",
 ]
 
 
