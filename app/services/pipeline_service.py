@@ -149,6 +149,21 @@ def _copiar_ou_vazio(df: Any, colunas: List[str] | None = None) -> pd.DataFrame:
     return pd.DataFrame(columns=colunas or [])
 
 
+def _consolidar_remanescente_global(df_a: Any, df_b: Any) -> pd.DataFrame:
+    df_a_local = _copiar_ou_vazio(df_a)
+    df_b_local = _copiar_ou_vazio(df_b)
+
+    df_consolidado = pd.concat([df_a_local, df_b_local], ignore_index=True, sort=False)
+    if df_consolidado.empty:
+        return df_consolidado
+
+    for coluna_chave in ("id_linha_pipeline", "chave_linha_dataset"):
+        if coluna_chave in df_consolidado.columns:
+            return df_consolidado.drop_duplicates(subset=[coluna_chave], keep="first", ignore_index=True)
+
+    return df_consolidado
+
+
 def _executar_m0_adapter(contexto: PipelineContext) -> Dict[str, Any]:
     inventario = {
         "rodada_id": contexto.rodada_id,
@@ -1041,10 +1056,17 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # =========================================================================================
     # M5.3A
     # =========================================================================================
+    df_remanescente_global_ate_m5_2 = _consolidar_remanescente_global(
+        df_saldo_nao_elegivel_m5_1,
+        df_remanescente_m5_2,
+    )
     t0 = _agora()
-    print(f"[M5.3A] executando M5.3A com remanescente do M5.2 linhas={_safe_len(df_remanescente_m5_2)}")
+    print(
+        "[M5.3A] executando M5.3A com remanescente global ate M5.2 "
+        f"linhas={_safe_len(df_remanescente_global_ate_m5_2)}"
+    )
     outputs_m5_3a, meta_m5_3a = executar_m5_3_triagem_subregioes(
-        df_remanescente_m5_2=df_remanescente_m5_2,
+        df_remanescente_m5_2=df_remanescente_global_ate_m5_2,
         df_veiculos_tratados=df_veiculos_tratados,
     )
     tempo_m5_3a = _duracao_ms(t0)
@@ -1071,11 +1093,14 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             modulo="m5_3_triagem_subregioes",
             status="ok",
             mensagem="M5.3A executado com sucesso",
-            quantidade_entrada=_safe_len(df_remanescente_m5_2),
+            quantidade_entrada=_safe_len(df_remanescente_global_ate_m5_2),
             quantidade_saida=_safe_len(df_saldo_elegivel_composicao_m5_3),
             tempo_ms=tempo_m5_3a,
             extra={
                 **resumo_m5_3a,
+                "total_saldo_nao_elegivel_m5_1": _safe_len(df_saldo_nao_elegivel_m5_1),
+                "total_remanescente_m5_2": _safe_len(df_remanescente_m5_2),
+                "total_remanescente_global_ate_m5_2": _safe_len(df_remanescente_global_ate_m5_2),
                 "total_subregioes_consolidadas_m5_3": _safe_len(df_subregioes_consolidadas_m5_3),
                 "total_tentativas_triagem_subregioes_m5_3": _safe_len(df_tentativas_triagem_subregioes_m5_3),
             },
@@ -1225,6 +1250,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             "total_premanifestos_m5_2": _safe_len(df_premanifestos_m5_2),
             "total_itens_premanifestados_m5_2": _safe_len(df_itens_premanifestos_m5_2),
             "total_remanescente_m5_2": _safe_len(df_remanescente_m5_2),
+            "total_remanescente_global_ate_m5_2": _safe_len(df_remanescente_global_ate_m5_2),
             "total_tentativas_m5_2": _safe_len(df_tentativas_m5_2),
             "total_saldo_elegivel_m5_3": _safe_len(df_saldo_elegivel_composicao_m5_3),
             "total_saldo_nao_elegivel_m5_3": _safe_len(df_saldo_nao_elegivel_m5_3),
@@ -1422,9 +1448,17 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # =========================================================================================
     # M5.4A
     # =========================================================================================
+    df_remanescente_global_ate_m5_3 = _consolidar_remanescente_global(
+        df_saldo_nao_elegivel_m5_3,
+        df_remanescente_m5_3,
+    )
     t0 = _agora()
+    print(
+        "[M5.4A] executando M5.4A com remanescente global ate M5.3 "
+        f"linhas={_safe_len(df_remanescente_global_ate_m5_3)}"
+    )
     outputs_m5_4a, meta_m5_4a = executar_m5_4a_triagem_mesorregioes(
-        df_remanescente_m5_3=df_remanescente_m5_3,
+        df_remanescente_m5_3=df_remanescente_global_ate_m5_3,
         df_veiculos_tratados=df_veiculos_tratados,
     )
     tempo_m5_4a = _duracao_ms(t0)
@@ -1442,11 +1476,14 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             modulo="m5_4a_triagem_mesorregioes",
             status="ok",
             mensagem="M5.4A executado com sucesso",
-            quantidade_entrada=_safe_len(df_remanescente_m5_3),
+            quantidade_entrada=_safe_len(df_remanescente_global_ate_m5_3),
             quantidade_saida=_safe_len(df_saldo_elegivel_composicao_m5_4),
             tempo_ms=tempo_m5_4a,
             extra={
                 **resumo_m5_4a,
+                "total_saldo_nao_elegivel_m5_3": _safe_len(df_saldo_nao_elegivel_m5_3),
+                "total_remanescente_m5_3": _safe_len(df_remanescente_m5_3),
+                "total_remanescente_global_ate_m5_3": _safe_len(df_remanescente_global_ate_m5_3),
                 "total_mesorregioes_consolidadas_m5_4": _safe_len(df_mesorregioes_consolidadas_m5_4),
                 "total_tentativas_triagem_mesorregioes_m5_4": _safe_len(df_tentativas_triagem_mesorregioes_m5_4),
             },
@@ -1485,6 +1522,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     df_itens_premanifestos_m5_4 = outputs_m5_4b["df_itens_premanifestos_m5_4"]
     df_tentativas_m5_4 = outputs_m5_4b["df_tentativas_m5_4"]
     df_remanescente_m5_4 = outputs_m5_4b["df_remanescente_m5_4"]
+    df_remanescente_global_final_roteirizacao = _copiar_ou_vazio(df_remanescente_m5_4)
 
     logs.append(
         _log(
@@ -1496,6 +1534,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             tempo_ms=tempo_m5_4b,
             extra={
                 **resumo_m5_4b,
+                "total_remanescente_global_final_roteirizacao": _safe_len(df_remanescente_global_final_roteirizacao),
                 "total_premanifestos_m5_4": _safe_len(df_premanifestos_m5_4),
                 "total_tentativas_m5_4": _safe_len(df_tentativas_m5_4),
             },
@@ -1568,7 +1607,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             df_manifestos_base_m6=df_manifestos_base_m6,
             df_estatisticas_manifestos_antes_m6=df_estatisticas_manifestos_antes_m6,
             df_itens_manifestos_base_m6=df_itens_manifestos_base_m6,
-            df_remanescente_m5_4=df_remanescente_m5_4,
+            df_remanescente_m5_4=df_remanescente_global_final_roteirizacao,
             data_base_roteirizacao=contexto.data_base,
             tipo_roteirizacao=contexto.tipo_roteirizacao,
             caminhos_pipeline=contexto.caminhos_pipeline,
@@ -1587,8 +1626,8 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
                     if isinstance(df_itens_manifestos_base_m6, pd.DataFrame)
                     else pd.DataFrame()
                 ),
-                "df_remanescente_m6_2": df_remanescente_m5_4.copy() if isinstance(df_remanescente_m5_4, pd.DataFrame) else pd.DataFrame(),
-                "df_remanescente_m5_original_m6_2": df_remanescente_m5_4.copy() if isinstance(df_remanescente_m5_4, pd.DataFrame) else pd.DataFrame(),
+                "df_remanescente_m6_2": df_remanescente_global_final_roteirizacao.copy() if isinstance(df_remanescente_global_final_roteirizacao, pd.DataFrame) else pd.DataFrame(),
+                "df_remanescente_m5_original_m6_2": df_remanescente_global_final_roteirizacao.copy() if isinstance(df_remanescente_global_final_roteirizacao, pd.DataFrame) else pd.DataFrame(),
                 "df_tentativas_m6_2": pd.DataFrame(),
                 "df_movimentos_aceitos_m6_2": pd.DataFrame(),
             },
@@ -1601,12 +1640,12 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
                 "motivo_etapa_pulada": "sem_manifestos_base_m6_2",
                 "manifestos_base_total_m6_1": _safe_len(df_manifestos_base_m6),
                 "itens_manifestos_base_total_m6_1": _safe_len(df_itens_manifestos_base_m6),
-                "remanescente_m5_original_total": _safe_len(df_remanescente_m5_4),
+                "remanescente_m5_original_total": _safe_len(df_remanescente_global_final_roteirizacao),
                 "movimentos_aceitos_m6_2": 0,
                 "tentativas_total_m6_2": 0,
                 "linhas_entrada_m6_2": _safe_len(df_manifestos_base_m6),
                 "linhas_saida_m6_2": 0,
-                "remanescente_preservado_m6_2": _safe_len(df_remanescente_m5_4),
+                "remanescente_preservado_m6_2": _safe_len(df_remanescente_global_final_roteirizacao),
                 "caminhos_pipeline": contexto.caminhos_pipeline or {},
             },
         }
@@ -1783,6 +1822,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             "total_premanifestos_m5_4": _safe_len(df_premanifestos_m5_4),
             "total_itens_roteirizados_m5_4": _safe_len(df_itens_premanifestos_m5_4),
             "total_remanescente_m5_4": _safe_len(df_remanescente_m5_4),
+            "total_remanescente_global_final_roteirizacao": _safe_len(df_remanescente_global_final_roteirizacao),
             "total_manifestos_base_m6": _safe_len(df_manifestos_base_m6),
             "total_itens_manifestos_base_m6": _safe_len(df_itens_manifestos_base_m6),
             "total_manifestos_m6_2": _safe_len(df_manifestos_m6_2),
