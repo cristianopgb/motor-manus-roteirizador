@@ -69,6 +69,11 @@ COLUNAS_AUDITORIA_FLAT: List[str] = [
     "km_base_antes_m6", "ocupacao_base_antes_m6", "qtd_itens_base_antes_m6", "qtd_ctes_base_antes_m6",
     "qtd_paradas_base_antes_m6", "manifesto_a", "manifesto_b", "mesmo_perfil_flag", "mesma_mesorregiao_flag",
     "score_ocupacao", "score_km", "score_prioridade_m6", "elegivel_otimizacao_m6", "motivo_elegibilidade_m6",
+    "perfil_final_m6_2", "ocupacao_entrada_perc", "ocupacao_final_m6_2", "peso_final_m6_2", "km_final_m6_2",
+    "qtd_itens_final_m6_2", "qtd_paradas_final_m6_2", "flag_otimizado_m6_2", "espaco_disponivel_peso_kg_m6_2",
+    "paradas_disponiveis_m6_2", "mesorregiao_manifesto_m6", "origem_item_m6_2", "tipo_tentativa",
+    "nivel_hierarquia", "aceito", "comparativo_ocupacao_antes", "comparativo_ocupacao_depois",
+    "comparativo_peso_antes", "comparativo_peso_depois",
 ]
 
 
