@@ -80,6 +80,14 @@ COLUNAS_AUDITORIA_FLAT: List[str] = [
     "metodo_predominante_m7", "metodo_sequenciamento", "status_sequenciamento_m7",
     "criterio_doc", "criterio_parada", "bucket_prioridade_doc_m7", "folga_prioridade_doc_m7",
     "peso_prioridade_doc_m7", "coord_dest_origem_m7", "status_coord_filial_m7", "status_coord_dest_m7",
+    "cidade_filial_m7_1", "possui_cidade_filial_no_manifesto_m7_1", "cidade_filial_foi_primeiro_bloco_m7_1",
+    "flag_reordenado_origem_m7_1", "km_total_original_m7", "km_total_reavaliado_m7_1", "diferenca_km_m7_1",
+    "status_km_m7_1", "ocupacao_original_m7_1", "peso_total_original_m7_1",
+    "ordem_entrega_doc_m7_1", "ordem_parada_m7_1", "flag_cidade_filial_m7_1",
+    "status_final_m7_2", "km_total_final_m7_2", "ocupacao_original_m7_2", "ocupacao_final_m7_2",
+    "cidade_removida_m7_2", "quantidade_cidades_removidas_m7_2", "manifesto_desfeito_m7_2",
+    "motivo_ajuste_m7_2", "ordem_entrega_doc_m7_2", "ordem_parada_m7_2", "status_item_m7_2",
+    "motivo_retirada_m7_2", "cidades_testadas", "km_resultante", "ocupacao_resultante",
 ]
 
 
