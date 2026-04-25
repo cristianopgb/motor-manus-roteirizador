@@ -11,7 +11,7 @@ import pandas as pd
 # M6.2 - COMPLEMENTO DE OCUPAÇÃO POR ENCAIXE DE FOLGA
 # -----------------------------------------------------------------------------------------
 # REGRA
-# - selecionar manifestos com ocupação < 85
+# - selecionar manifestos com ocupação < 95
 # - excluir manifestos com veiculo_exclusivo_flag = true
 # - ordenar da menor ocupação para a maior
 # - calcular espaço disponível em peso e paradas
@@ -157,7 +157,7 @@ def executar_m6_2_complemento_ocupacao(
     data_base_roteirizacao: datetime,
     tipo_roteirizacao: str,
     caminhos_pipeline: Optional[Dict[str, Any]] = None,
-    ocupacao_alvo_perc: float = 85.0,
+    ocupacao_alvo_perc: float = 95.0,
 ) -> Dict[str, Any]:
     if (
         not _tem_schema_minimo(df_manifestos_base_m6, COLS_MANIFESTOS_OBRIGATORIAS)

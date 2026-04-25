@@ -2108,7 +2108,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             data_base_roteirizacao=contexto.data_base,
             tipo_roteirizacao=contexto.tipo_roteirizacao,
             caminhos_pipeline=contexto.caminhos_pipeline,
-            ocupacao_alvo_perc=85.0,
+            ocupacao_alvo_perc=95.0,
         )
     else:
         resultado_m6_2 = {
@@ -2132,7 +2132,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
                 "modulo": "M6.2",
                 "data_base_roteirizacao": contexto.data_base.isoformat(),
                 "tipo_roteirizacao": contexto.tipo_roteirizacao,
-                "ocupacao_alvo_perc": 85.0,
+                "ocupacao_alvo_perc": 95.0,
                 "etapa_pulada": True,
                 "motivo_etapa_pulada": "sem_manifestos_base_m6_2",
                 "manifestos_base_total_m6_1": _safe_len(df_manifestos_base_m6_input),
