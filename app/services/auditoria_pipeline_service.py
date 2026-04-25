@@ -74,6 +74,12 @@ COLUNAS_AUDITORIA_FLAT: List[str] = [
     "paradas_disponiveis_m6_2", "mesorregiao_manifesto_m6", "origem_item_m6_2", "tipo_tentativa",
     "nivel_hierarquia", "aceito", "comparativo_ocupacao_antes", "comparativo_ocupacao_depois",
     "comparativo_peso_antes", "comparativo_peso_depois",
+    "ordem_entrega_doc_m7", "ordem_carregamento_doc_m7", "ordem_parada_m7",
+    "sequencia_entrega", "sequencia_carregamento", "parada", "parada_idx", "cidade_parada",
+    "distancia_parcial_km", "distancia_acumulada_km", "km_entre_paradas",
+    "metodo_predominante_m7", "metodo_sequenciamento", "status_sequenciamento_m7",
+    "criterio_doc", "criterio_parada", "bucket_prioridade_doc_m7", "folga_prioridade_doc_m7",
+    "peso_prioridade_doc_m7", "coord_dest_origem_m7", "status_coord_filial_m7", "status_coord_dest_m7",
 ]
 
 
