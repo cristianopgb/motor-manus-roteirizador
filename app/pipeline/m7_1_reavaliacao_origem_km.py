@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -164,7 +164,31 @@ def executar_m7_1_reavaliacao_origem_km(
     df_resumo_sequenciamento_m7: pd.DataFrame | None,
     data_base_roteirizacao: Any = None,
     caminhos_pipeline: Dict[str, Any] | None = None,
+    filial_contexto: Optional[Dict[str, Any]] = None,
 ) -> tuple[Dict[str, pd.DataFrame], Dict[str, Any]]:
+    campos_manifesto_obrigatorios = [
+        "manifesto_id",
+        "veiculo_perfil",
+        "veiculo_tipo",
+        "max_km_distancia_veiculo",
+        "capacidade_peso_kg_veiculo",
+        "capacidade_vol_m3_veiculo",
+        "ocupacao_minima_perc_veiculo",
+        "ocupacao_maxima_perc_veiculo",
+        "ocupacao_original_m7_1",
+        "peso_total_original_m7_1",
+        "cidade_filial_m7_1",
+        "uf_filial_m7_1",
+        "fonte_filial_m7_1",
+        "possui_cidade_filial_no_manifesto_m7_1",
+        "cidade_filial_foi_primeiro_bloco_m7_1",
+        "flag_reordenado_origem_m7_1",
+        "km_total_original_m7",
+        "km_total_reavaliado_m7_1",
+        "km_total_cidades_reavaliado_m7_1",
+        "diferenca_km_m7_1",
+        "status_km_m7_1",
+    ]
     df_manifestos = df_manifestos_m7.copy() if isinstance(df_manifestos_m7, pd.DataFrame) else pd.DataFrame()
     df_itens = df_itens_sequenciados_m7.copy() if isinstance(df_itens_sequenciados_m7, pd.DataFrame) else pd.DataFrame()
     _ = df_resumo_sequenciamento_m7.copy() if isinstance(df_resumo_sequenciamento_m7, pd.DataFrame) else pd.DataFrame()
@@ -175,7 +199,7 @@ def executar_m7_1_reavaliacao_origem_km(
 
     if df_itens.empty or "manifesto_id" not in df_itens.columns:
         vazios = {
-            "df_manifestos_reavaliados_m7_1": pd.DataFrame(),
+            "df_manifestos_reavaliados_m7_1": pd.DataFrame(columns=campos_manifesto_obrigatorios),
             "df_itens_reavaliados_m7_1": df_itens.copy(),
             "df_manifestos_acima_km_m7_1": pd.DataFrame(),
             "df_tentativas_reavaliacao_m7_1": pd.DataFrame(),
@@ -184,6 +208,9 @@ def executar_m7_1_reavaliacao_origem_km(
 
     col_ordem_doc = _pick_col(df_itens, ["ordem_entrega_doc_m7", "sequencia_entrega"], "ordem_entrega_doc_m7")
     col_origem_manifesto = _pick_col(df_manifestos, ["origem_cidade", "filial_cidade", "cidade_filial", "cidade_origem"])
+    col_origem_uf_manifesto = _pick_col(df_manifestos, ["origem_uf", "filial_uf", "uf_filial", "uf_origem"])
+    cidade_filial_contexto = _safe_text((filial_contexto or {}).get("cidade")).upper()
+    uf_filial_contexto = _safe_text((filial_contexto or {}).get("uf")).upper()
 
     if not df_manifestos.empty and "manifesto_id" in df_manifestos.columns:
         manifestos_idx = df_manifestos.copy()
@@ -204,9 +231,14 @@ def executar_m7_1_reavaliacao_origem_km(
         m_key = str(manifesto_id)
         linha_manifesto = manifestos_idx.loc[manifestos_idx["_manifesto_key"] == m_key].head(1)
 
-        cidade_filial = ""
-        if not linha_manifesto.empty and col_origem_manifesto:
+        cidade_filial = cidade_filial_contexto
+        uf_filial = uf_filial_contexto
+        fonte_filial_m7_1 = "contexto" if cidade_filial else "nao_resolvida"
+        if not cidade_filial and not linha_manifesto.empty and col_origem_manifesto:
             cidade_filial = _safe_text(linha_manifesto.iloc[0].get(col_origem_manifesto)).upper()
+            fonte_filial_m7_1 = "dataframe" if cidade_filial else "nao_resolvida"
+        if not uf_filial and not linha_manifesto.empty and col_origem_uf_manifesto:
+            uf_filial = _safe_text(linha_manifesto.iloc[0].get(col_origem_uf_manifesto)).upper()
 
         g["_cidade_norm"] = g.get("cidade", "").fillna("").astype(str).str.upper().str.strip()
         mask_filial_before = g["_cidade_norm"].eq(cidade_filial) if cidade_filial else pd.Series([False] * len(g), index=g.index)
@@ -232,6 +264,9 @@ def executar_m7_1_reavaliacao_origem_km(
         km_reavaliado, km_cidades_reavaliado = _calcular_km_rota(g, fator)
         g["km_total_reavaliado_m7_1"] = km_reavaliado
         g["km_total_cidades_reavaliado_m7_1"] = km_cidades_reavaliado
+        g["cidade_filial_m7_1"] = cidade_filial
+        g["uf_filial_m7_1"] = uf_filial
+        g["fonte_filial_m7_1"] = fonte_filial_m7_1
 
         km_original = 0.0
         if not linha_manifesto.empty:
@@ -251,8 +286,9 @@ def executar_m7_1_reavaliacao_origem_km(
         ) if not linha_manifesto.empty else 0.0
 
         print(
-            f"[M7.1] manifesto={manifesto_id} cidade_filial={cidade_filial} "
-            f"reordenado={reordenado} km_original={km_original:.2f} km_reavaliado={km_reavaliado:.2f}"
+            f"[M7.1] manifesto={manifesto_id} cidade_filial={cidade_filial} uf_filial={uf_filial} "
+            f"fonte_filial={fonte_filial_m7_1} reordenado={reordenado} "
+            f"km_original={km_original:.2f} km_reavaliado={km_reavaliado:.2f}"
         )
 
         resumo = {
@@ -267,11 +303,14 @@ def executar_m7_1_reavaliacao_origem_km(
             "ocupacao_original_m7_1": ocupacao_original_m7_1,
             "peso_total_original_m7_1": peso_total_original,
             "cidade_filial_m7_1": cidade_filial,
+            "uf_filial_m7_1": uf_filial,
+            "fonte_filial_m7_1": fonte_filial_m7_1,
             "possui_cidade_filial_no_manifesto_m7_1": possui_cidade_filial,
             "cidade_filial_foi_primeiro_bloco_m7_1": primeiro_bloco_depois if possui_cidade_filial else False,
             "flag_reordenado_origem_m7_1": reordenado,
             "km_total_original_m7": km_original,
             "km_total_reavaliado_m7_1": km_reavaliado,
+            "km_total_cidades_reavaliado_m7_1": km_cidades_reavaliado,
             "diferenca_km_m7_1": km_reavaliado - km_original,
             "status_km_m7_1": status_km,
         }
@@ -280,6 +319,8 @@ def executar_m7_1_reavaliacao_origem_km(
             {
                 "manifesto_id": manifesto_id,
                 "cidade_filial": cidade_filial,
+                "uf_filial": uf_filial,
+                "fonte_filial_m7_1": fonte_filial_m7_1,
                 "possui_cidade_filial": possui_cidade_filial,
                 "reordenado": reordenado,
                 "km_original": km_original,
@@ -290,6 +331,9 @@ def executar_m7_1_reavaliacao_origem_km(
         itens_reavaliados.append(g)
 
     df_manifestos_reavaliados = pd.DataFrame(manifestos_resumo)
+    for col in campos_manifesto_obrigatorios:
+        if col not in df_manifestos_reavaliados.columns:
+            df_manifestos_reavaliados[col] = None
     df_itens_reavaliados = pd.concat(itens_reavaliados, ignore_index=True) if itens_reavaliados else pd.DataFrame()
     df_manifestos_acima_km = df_manifestos_reavaliados.loc[df_manifestos_reavaliados["status_km_m7_1"].eq("acima_limite")].reset_index(drop=True) if not df_manifestos_reavaliados.empty else pd.DataFrame()
     df_tentativas = pd.DataFrame(tentativas)

@@ -2383,6 +2383,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         data_base_roteirizacao=contexto.data_base,
         tipo_roteirizacao=contexto.tipo_roteirizacao,
         caminhos_pipeline=contexto.caminhos_pipeline,
+        filial_contexto=contexto.filial,
     )
     tempo_m7 = _duracao_ms(t0)
     metricas_tempo["m7_sequenciamento_entregas_ms"] = tempo_m7
@@ -2505,6 +2506,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         df_resumo_sequenciamento_m7=df_manifestos_sequenciamento_resumo_m7,
         data_base_roteirizacao=contexto.data_base,
         caminhos_pipeline=contexto.caminhos_pipeline,
+        filial_contexto=contexto.filial,
     )
     tempo_m7_1 = _duracao_ms(t0)
     metricas_tempo["m7_1_reavaliacao_origem_km_ms"] = tempo_m7_1
@@ -2553,15 +2555,35 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # M7.2
     # =========================================================================================
     t0 = _agora()
-    outputs_m7_2, meta_m7_2 = executar_m7_2_adequacao_excesso_km(
-        df_manifestos_reavaliados_m7_1=df_manifestos_reavaliados_m7_1,
-        df_itens_reavaliados_m7_1=df_itens_reavaliados_m7_1,
-        df_manifestos_acima_km_m7_1=df_manifestos_acima_km_m7_1,
-        data_base_roteirizacao=contexto.data_base,
-        caminhos_pipeline=contexto.caminhos_pipeline,
-    )
+    try:
+        outputs_m7_2, meta_m7_2 = executar_m7_2_adequacao_excesso_km(
+            df_manifestos_reavaliados_m7_1=df_manifestos_reavaliados_m7_1,
+            df_itens_reavaliados_m7_1=df_itens_reavaliados_m7_1,
+            df_manifestos_acima_km_m7_1=df_manifestos_acima_km_m7_1,
+            data_base_roteirizacao=contexto.data_base,
+            caminhos_pipeline=contexto.caminhos_pipeline,
+            filial_contexto=contexto.filial,
+        )
+    except Exception as e:
+        print(f"[M7.2] erro estrutural capturado no pipeline_service: {e}")
+        outputs_m7_2 = {
+            "df_manifestos_ajustados_m7_2": pd.DataFrame(),
+            "df_itens_manifestos_finais_m7_2": pd.DataFrame(),
+            "df_itens_retirados_m7_2": pd.DataFrame(),
+            "df_manifestos_desfeitos_m7_2": pd.DataFrame(),
+            "df_excedente_final_m7_2": pd.DataFrame(),
+            "df_tentativas_adequacao_m7_2": pd.DataFrame(
+                [{"tipo_tentativa": "erro_estrutural_modulo", "motivo": str(e), "aceito": False}]
+            ),
+        }
+        meta_m7_2 = {
+            "resumo_m7_2": {"erro_estrutural_m7_2": str(e)},
+        }
     tempo_m7_2 = _duracao_ms(t0)
     metricas_tempo["m7_2_adequacao_excesso_km_ms"] = tempo_m7_2
+
+    if not isinstance(outputs_m7_2, dict):
+        outputs_m7_2 = {}
 
     df_manifestos_ajustados_m7_2 = _copiar_ou_vazio(outputs_m7_2.get("df_manifestos_ajustados_m7_2"))
     df_itens_manifestos_finais_m7_2 = _copiar_ou_vazio(outputs_m7_2.get("df_itens_manifestos_finais_m7_2"))
