@@ -35,7 +35,7 @@ PIPELINE_FLAGS = {
     "executar_m5_4b": True,
     "executar_m6_1": True,
     "executar_m6_2": True,
-    "executar_m7": False,
+    "executar_m7": True,
 }
 
 
@@ -2361,107 +2361,145 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # =========================================================================================
     # M7
     # =========================================================================================
+    df_manifestos_m6_2_input_m7 = _copiar_ou_vazio(df_manifestos_m6_2, colunas=COLS_MANIFESTOS_OBRIGATORIAS)
+    df_itens_manifestos_m6_2_input_m7 = _copiar_ou_vazio(df_itens_manifestos_m6_2)
+    df_geo_tratado_input_m7 = _copiar_ou_vazio(df_geo_tratado)
+    df_geo_raw_input_m7 = _copiar_ou_vazio(contexto.df_geo_raw)
+
+    print("[M7] executando M7 com:")
+    print(f"- df_manifestos_m6_2 linhas={_safe_len(df_manifestos_m6_2_input_m7)}")
+    print(f"- df_itens_manifestos_m6_2 linhas={_safe_len(df_itens_manifestos_m6_2_input_m7)}")
+    print(f"- df_geo_tratado linhas={_safe_len(df_geo_tratado_input_m7)}")
+    print(f"- df_geo_raw linhas={_safe_len(df_geo_raw_input_m7)}")
+
     t0 = _agora()
-    if _safe_len(df_manifestos_m6_2) > 0 and _safe_len(df_itens_manifestos_m6_2) > 0:
-        outputs_m7, meta_m7 = executar_m7_sequenciamento_entregas(
-            df_manifestos_m6_2=df_manifestos_m6_2,
-            df_itens_manifestos_m6_2=df_itens_manifestos_m6_2,
-            df_geo_tratado=df_geo_tratado,
-            df_geo_raw=contexto.df_geo_raw,
-            data_base_roteirizacao=contexto.data_base,
-            tipo_roteirizacao=contexto.tipo_roteirizacao,
-            caminhos_pipeline=contexto.caminhos_pipeline,
-        )
-        status_log_m7 = "ok"
-        mensagem_log_m7 = "M7 executado com sucesso"
-    else:
-        outputs_m7 = {
-            "df_manifestos_m7": df_manifestos_m6_2.copy() if isinstance(df_manifestos_m6_2, pd.DataFrame) else pd.DataFrame(columns=["manifesto_id"]),
-            "df_itens_manifestos_sequenciados_m7": df_itens_manifestos_m6_2.copy() if isinstance(df_itens_manifestos_m6_2, pd.DataFrame) else pd.DataFrame(columns=["manifesto_id", "id_linha_pipeline"]),
-            "df_manifestos_sequenciamento_resumo_m7": pd.DataFrame(columns=["manifesto_id", "status_sequenciamento_m7"]),
-            "df_tentativas_sequenciamento_m7": pd.DataFrame(columns=["manifesto_id", "resultado", "motivo"]),
-            "df_diagnostico_recuperacao_coordenadas_m7": pd.DataFrame(columns=["indicador", "valor"]),
-        }
-        meta_m7 = {
-            "resumo_m7": {
-                "modulo": "M7",
-                "etapa_pulada": True,
-                "motivo_etapa_pulada": "sem_manifestos_para_sequenciamento_m7",
-                "linhas_entrada_m7": _safe_len(df_itens_manifestos_m6_2),
-                "linhas_saida_m7": 0,
-            },
-            "auditoria_m7": {},
-        }
-        status_log_m7 = "ignorado"
-        mensagem_log_m7 = "M7 pulado por ausência de manifestos/itens para sequenciamento"
+    outputs_m7, meta_m7 = executar_m7_sequenciamento_entregas(
+        df_manifestos_m6_2=df_manifestos_m6_2_input_m7,
+        df_itens_manifestos_m6_2=df_itens_manifestos_m6_2_input_m7,
+        df_geo_tratado=df_geo_tratado_input_m7,
+        df_geo_raw=df_geo_raw_input_m7,
+        data_base_roteirizacao=contexto.data_base,
+        tipo_roteirizacao=contexto.tipo_roteirizacao,
+        caminhos_pipeline=contexto.caminhos_pipeline,
+    )
     tempo_m7 = _duracao_ms(t0)
     metricas_tempo["m7_sequenciamento_entregas_ms"] = tempo_m7
 
-    resumo_m7 = meta_m7["resumo_m7"]
-    auditoria_m7 = meta_m7["auditoria_m7"]
+    if not isinstance(outputs_m7, dict):
+        outputs_m7 = {}
 
-    df_manifestos_m7 = outputs_m7["df_manifestos_m7"]
-    df_itens_manifestos_sequenciados_m7 = outputs_m7["df_itens_manifestos_sequenciados_m7"]
-    df_manifestos_sequenciamento_resumo_m7 = outputs_m7["df_manifestos_sequenciamento_resumo_m7"]
-    df_tentativas_sequenciamento_m7 = outputs_m7["df_tentativas_sequenciamento_m7"]
-    df_diagnostico_recuperacao_coordenadas_m7 = outputs_m7["df_diagnostico_recuperacao_coordenadas_m7"]
+    output_keys_m7 = sorted(list(outputs_m7.keys()))
+    print(f"[M7] output real recebido: {output_keys_m7}")
+
+    resumo_m7 = meta_m7.get("resumo_m7", {}) if isinstance(meta_m7, dict) else {}
+    auditoria_m7 = meta_m7.get("auditoria_m7", {}) if isinstance(meta_m7, dict) else {}
+
+    snapshots_m7_map = {
+        "m7_manifestos": ["df_manifestos_m7"],
+        "m7_itens_sequenciados": ["df_itens_manifestos_sequenciados_m7"],
+        "m7_paradas": ["df_paradas_m7"],
+        "m7_auditoria": ["df_auditoria_m7"],
+        "m7_resumo_sequenciamento": ["df_manifestos_sequenciamento_resumo_m7"],
+        "m7_tentativas": ["df_tentativas_sequenciamento_m7"],
+        "m7_diagnostico_coordenadas": ["df_diagnostico_recuperacao_coordenadas_m7"],
+    }
+
+    snapshots_m7_df: Dict[str, pd.DataFrame] = {}
+    for snapshot_nome, chaves_contrato in snapshots_m7_map.items():
+        df_snapshot = None
+        chave_encontrada = None
+        for chave in chaves_contrato:
+            candidato = outputs_m7.get(chave)
+            if isinstance(candidato, pd.DataFrame):
+                df_snapshot = candidato
+                chave_encontrada = chave
+                break
+
+        if df_snapshot is None:
+            print(f"[M7] snapshot {snapshot_nome} não retornado pelo módulo ativo")
+            snapshots_m7_df[snapshot_nome] = pd.DataFrame()
+            continue
+
+        snapshots_m7_df[snapshot_nome] = df_snapshot
+        print(f"[M7] snapshot {snapshot_nome} mapeado da chave {chave_encontrada}")
+
+    df_manifestos_m7 = snapshots_m7_df["m7_manifestos"]
+    df_itens_manifestos_sequenciados_m7 = snapshots_m7_df["m7_itens_sequenciados"]
+    df_paradas_m7 = snapshots_m7_df["m7_paradas"]
+    df_auditoria_m7 = snapshots_m7_df["m7_auditoria"]
+    df_manifestos_sequenciamento_resumo_m7 = snapshots_m7_df["m7_resumo_sequenciamento"]
+    df_tentativas_sequenciamento_m7 = snapshots_m7_df["m7_tentativas"]
+    df_diagnostico_recuperacao_coordenadas_m7 = snapshots_m7_df["m7_diagnostico_coordenadas"]
+
+    print(f"[M7] df_manifestos_m7 linhas={_safe_len(df_manifestos_m7)}")
+    print(f"[M7] df_itens_sequenciados_m7 linhas={_safe_len(df_itens_manifestos_sequenciados_m7)}")
+    print(f"[M7] df_paradas_m7 linhas={_safe_len(df_paradas_m7)}")
+    print(f"[M7] df_auditoria_m7 linhas={_safe_len(df_auditoria_m7)}")
+    print(f"[M7] df_resumo_sequenciamento_m7 linhas={_safe_len(df_manifestos_sequenciamento_resumo_m7)}")
+    print(f"[M7] df_tentativas_m7 linhas={_safe_len(df_tentativas_sequenciamento_m7)}")
+    print(f"[M7] df_diagnostico_coordenadas_m7 linhas={_safe_len(df_diagnostico_recuperacao_coordenadas_m7)}")
+
+    status_log_m7 = "ok" if _safe_len(df_itens_manifestos_m6_2_input_m7) > 0 else "ignorado"
+    mensagem_log_m7 = "M7 executado com sucesso" if status_log_m7 == "ok" else "M7 executado com entrada vazia e saída controlada"
 
     logs.append(
         _log(
             modulo="m7_sequenciamento_entregas",
             status=status_log_m7,
             mensagem=mensagem_log_m7,
-            quantidade_entrada=_safe_len(df_itens_manifestos_m6_2),
+            quantidade_entrada=_safe_len(df_itens_manifestos_m6_2_input_m7),
             quantidade_saida=_safe_len(df_itens_manifestos_sequenciados_m7),
             tempo_ms=tempo_m7,
             extra={
                 **resumo_m7,
+                "output_real_chaves_m7": output_keys_m7,
                 "total_manifestos_m7": _safe_len(df_manifestos_m7),
-                "total_itens_manifestos_sequenciados_m7": _safe_len(df_itens_manifestos_sequenciados_m7),
-                "total_manifestos_sequenciamento_resumo_m7": _safe_len(df_manifestos_sequenciamento_resumo_m7),
-                "total_tentativas_sequenciamento_m7": _safe_len(df_tentativas_sequenciamento_m7),
-                "total_diagnostico_recuperacao_coordenadas_m7": _safe_len(df_diagnostico_recuperacao_coordenadas_m7),
+                "total_itens_sequenciados_m7": _safe_len(df_itens_manifestos_sequenciados_m7),
+                "total_paradas_m7": _safe_len(df_paradas_m7),
+                "total_auditoria_m7": _safe_len(df_auditoria_m7),
+                "total_resumo_sequenciamento_m7": _safe_len(df_manifestos_sequenciamento_resumo_m7),
+                "total_tentativas_m7": _safe_len(df_tentativas_sequenciamento_m7),
+                "total_diagnostico_coordenadas_m7": _safe_len(df_diagnostico_recuperacao_coordenadas_m7),
             },
         )
     )
 
-    # =========================================================================================
-    # SERIALIZAÇÃO FINAL - SOMENTE M7
-    # =========================================================================================
-    t0 = _agora()
-
-    manifestos_m7 = _serializar_dataframe_para_records(df_manifestos_m7, limit=None)
-    itens_manifestos_sequenciados_m7 = _serializar_dataframe_para_records(df_itens_manifestos_sequenciados_m7, limit=None)
-    manifestos_sequenciamento_resumo_m7 = _serializar_dataframe_para_records(df_manifestos_sequenciamento_resumo_m7, limit=None)
-    tentativas_sequenciamento_m7 = _serializar_dataframe_para_records(df_tentativas_sequenciamento_m7, limit=None)
-    diagnostico_recuperacao_coordenadas_m7 = _serializar_dataframe_para_records(df_diagnostico_recuperacao_coordenadas_m7, limit=None)
-    saldo_final_roteirizacao = _serializar_dataframe_para_records(df_remanescente_m6_2, limit=None)
-    nao_roteirizados_m6_2 = saldo_final_roteirizacao
-    nao_roteirizaveis_m3 = []
-
-    manifestos_fechados = []
-    manifestos_compostos = []
-    for manifesto in manifestos_m7:
-        origem_tipo = str(manifesto.get("origem_manifesto_tipo", "")).strip().lower()
-        origem_modulo = str(manifesto.get("origem_manifesto_modulo", "")).strip().upper()
-        if "manifesto_fechado" in origem_tipo or origem_modulo == "M4":
-            manifestos_fechados.append(manifesto)
-        else:
-            manifestos_compostos.append(manifesto)
-
-    tempo_serializacao = _duracao_ms(t0)
-    metricas_tempo["serializacao_resposta_ms"] = tempo_serializacao
+    m7_snapshot_ordem = [
+        "m7_manifestos",
+        "m7_itens_sequenciados",
+        "m7_paradas",
+        "m7_auditoria",
+        "m7_resumo_sequenciamento",
+        "m7_tentativas",
+        "m7_diagnostico_coordenadas",
+    ]
+    for snapshot_nome in m7_snapshot_ordem:
+        df_snapshot = snapshots_m7_df.get(snapshot_nome)
+        if not isinstance(df_snapshot, pd.DataFrame):
+            print(f"[M7] snapshot {snapshot_nome} não retornado pelo módulo ativo")
+            continue
+        total_m7_snapshot = persistir_snapshot_modulo_auditoria(
+            teste_id=teste_id_auditoria,
+            rodada_id=contexto.rodada_id,
+            upload_id=contexto.upload_id,
+            modulo="m7_sequenciamento_entregas",
+            ordem_modulo=11,
+            df_etapa=df_snapshot,
+            snapshot_nome=snapshot_nome,
+            contexto=contexto_auditoria,
+            rastreamento=auditoria_flat_rastreamento,
+        )
+        auditoria_por_modulo["m7_sequenciamento_entregas"] = auditoria_por_modulo.get("m7_sequenciamento_entregas", 0) + total_m7_snapshot
+        auditoria_por_snapshot[snapshot_nome] = auditoria_por_snapshot.get(snapshot_nome, 0) + total_m7_snapshot
+        print(f"[AUDITORIA FLAT] snapshot={snapshot_nome} linhas={total_m7_snapshot}")
 
     tempo_total = _duracao_ms(inicio_total)
     metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
-    print("[RESPONSE] total manifestos_m7 serializados:", len(manifestos_m7))
-    print("[RESPONSE] total itens_manifestos_sequenciados_m7 serializados:", len(itens_manifestos_sequenciados_m7))
-    print("[RESPONSE] total manifestos_sequenciamento_resumo_m7 serializados:", len(manifestos_sequenciamento_resumo_m7))
-    print("[RESPONSE] total remanescentes saldo_final_roteirizacao:", len(saldo_final_roteirizacao))
+    print(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
 
     resposta: Dict[str, Any] = {
         "status": "ok",
-        "mensagem": "Motor executou com sucesso até o M7 sequenciamento de entregas.",
+        "mensagem": "Execução encerrada propositalmente após o M7 para auditoria da etapa final de sequenciamento.",
         "pipeline_real_ate": "M7",
         "modo_resposta": "auditoria_m7_sequenciamento_entregas",
         "resposta_truncada": False,
@@ -2480,79 +2518,41 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             "total_enriquecida_m2": _safe_len(df_carteira_enriquecida),
             "total_triagem_m3": _safe_len(df_carteira_triagem),
             "total_roteirizavel_m3": _safe_len(df_carteira_roteirizavel),
-            "total_agendamento_futuro_m3": _safe_len(df_carteira_agendamento_futuro),
-            "total_agendas_vencidas_m3": _safe_len(df_carteira_agendas_vencidas),
             "total_input_bloco_4": _safe_len(df_input_oficial_bloco_4),
-            "total_remanescente_global_m4": _safe_len(df_remanescente_roteirizavel_bloco_4),
-            "total_manifestos_m4": _safe_len(df_manifestos_m4),
-            "total_itens_manifestados_m4": _safe_len(df_itens_manifestados_m4),
-            "total_premanifestos_m5_2": _safe_len(df_premanifestos_m5_2),
-            "total_itens_manifestados_m5_2": _safe_len(df_itens_premanifestos_m5_2),
-            "total_subregioes_consolidadas_m5_3": _safe_len(df_subregioes_consolidadas_m5_3),
-            "total_premanifestos_m5_3": _safe_len(df_premanifestos_m5_3),
-            "total_itens_roteirizados_m5_3": _safe_len(df_itens_premanifestos_m5_3),
-            "total_mesorregioes_consolidadas_m5_4": _safe_len(df_mesorregioes_consolidadas_m5_4),
-            "total_premanifestos_m5_4": _safe_len(df_premanifestos_m5_4),
-            "total_itens_roteirizados_m5_4": _safe_len(df_itens_premanifestos_m5_4),
-            "total_remanescente_m5_4": _safe_len(df_remanescente_m5_4),
-            "total_remanescente_global_final_roteirizacao": _safe_len(df_remanescente_global_final_roteirizacao),
-            "total_manifestos_base_m6": _safe_len(df_manifestos_base_m6),
-            "total_itens_manifestos_base_m6": _safe_len(df_itens_manifestos_base_m6),
             "total_manifestos_m6_2": _safe_len(df_manifestos_m6_2),
             "total_itens_manifestos_m6_2": _safe_len(df_itens_manifestos_m6_2),
-            "total_remanescente_m6_2": _safe_len(df_remanescente_m6_2),
             "total_manifestos_m7": _safe_len(df_manifestos_m7),
-            "total_itens_manifestos_sequenciados_m7": _safe_len(df_itens_manifestos_sequenciados_m7),
-            "total_manifestos_sequenciamento_resumo_m7": _safe_len(df_manifestos_sequenciamento_resumo_m7),
-            "total_tentativas_sequenciamento_m7": _safe_len(df_tentativas_sequenciamento_m7),
-            "total_diagnostico_recuperacao_coordenadas_m7": _safe_len(df_diagnostico_recuperacao_coordenadas_m7),
-            "resumo_m3": resumo_m3,
-            "resumo_m31": resumo_m31,
-            "resumo_m4": resumo_m4,
-            "resumo_m5_1": resumo_m5_1,
-            "resumo_m5_2": resumo_m5_2,
-            "resumo_m5_3a": resumo_m5_3a,
-            "resumo_m5_3b": resumo_m5_3b,
-            "resumo_m5_4a": resumo_m5_4a,
-            "resumo_m5_4b": resumo_m5_4b,
-            "resumo_m6_1": resumo_m6_1,
-            "resumo_m6_2": resumo_m6_2,
-            "resumo_m7": resumo_m7,
+            "total_itens_sequenciados_m7": _safe_len(df_itens_manifestos_sequenciados_m7),
+            "total_paradas_m7": _safe_len(df_paradas_m7),
+            "total_auditoria_m7": _safe_len(df_auditoria_m7),
+            "total_resumo_sequenciamento_m7": _safe_len(df_manifestos_sequenciamento_resumo_m7),
+            "total_tentativas_m7": _safe_len(df_tentativas_sequenciamento_m7),
+            "total_diagnostico_coordenadas_m7": _safe_len(df_diagnostico_recuperacao_coordenadas_m7),
         },
-        "contexto_rodada": {
-            "filial": contexto.filial,
-            "parametros_rodada": contexto.parametros_rodada,
+        "resumo_m4": resumo_m4,
+        "resumo_m5_1": resumo_m5_1,
+        "resumo_m5_2": resumo_m5_2,
+        "resumo_m5_3a": resumo_m5_3a,
+        "resumo_m5_3b": resumo_m5_3b,
+        "resumo_m5_4a": resumo_m5_4a,
+        "resumo_m5_4b": resumo_m5_4b,
+        "resumo_m6_1": resumo_m6_1,
+        "resumo_m6_2": resumo_m6_2,
+        "resumo_m7": {
+            **resumo_m7,
+            "total_manifestos_m7": _safe_len(df_manifestos_m7),
+            "total_itens_sequenciados_m7": _safe_len(df_itens_manifestos_sequenciados_m7),
+            "total_paradas_m7": _safe_len(df_paradas_m7),
+            "total_auditoria_m7": _safe_len(df_auditoria_m7),
+            "total_resumo_sequenciamento_m7": _safe_len(df_manifestos_sequenciamento_resumo_m7),
+            "total_tentativas_m7": _safe_len(df_tentativas_sequenciamento_m7),
+            "total_diagnostico_coordenadas_m7": _safe_len(df_diagnostico_recuperacao_coordenadas_m7),
         },
-        "manifestos_m7": manifestos_m7,
-        "manifestos_fechados": manifestos_fechados,
-        "manifestos_compostos": manifestos_compostos,
-        "nao_roteirizados": nao_roteirizados_m6_2,
-        "total_carteira": _safe_len(contexto.df_carteira_raw),
-        "total_roteirizado": _safe_len(df_itens_manifestos_sequenciados_m7),
-        "total_nao_roteirizado": _safe_len(df_remanescente_m6_2),
-        "itens_manifestos_sequenciados_m7": itens_manifestos_sequenciados_m7,
-        "manifestos_sequenciamento_resumo_m7": manifestos_sequenciamento_resumo_m7,
-        "tentativas_sequenciamento_m7": tentativas_sequenciamento_m7,
-        "diagnostico_recuperacao_coordenadas_m7": diagnostico_recuperacao_coordenadas_m7,
-        "remanescentes": {
-            "nao_roteirizaveis_m3": nao_roteirizaveis_m3,
-            "saldo_final_roteirizacao": saldo_final_roteirizacao,
-        },
-        "auditoria_serializacao": {
-            "manifestos_m7_total": _safe_len(df_manifestos_m7),
-            "manifestos_m7_retornado": len(manifestos_m7),
-            "itens_manifestos_sequenciados_m7_total": _safe_len(df_itens_manifestos_sequenciados_m7),
-            "itens_manifestos_sequenciados_m7_retornado": len(itens_manifestos_sequenciados_m7),
-            "manifestos_sequenciamento_resumo_m7_total": _safe_len(df_manifestos_sequenciamento_resumo_m7),
-            "manifestos_sequenciamento_resumo_m7_retornado": len(manifestos_sequenciamento_resumo_m7),
-            "tentativas_sequenciamento_m7_total": _safe_len(df_tentativas_sequenciamento_m7),
-            "tentativas_sequenciamento_m7_retornado": len(tentativas_sequenciamento_m7),
-            "diagnostico_recuperacao_coordenadas_m7_total": _safe_len(df_diagnostico_recuperacao_coordenadas_m7),
-            "diagnostico_recuperacao_coordenadas_m7_retornado": len(diagnostico_recuperacao_coordenadas_m7),
-            "remanescentes_nao_roteirizaveis_m3_total": 0,
-            "remanescentes_nao_roteirizaveis_m3_retornado": len(nao_roteirizaveis_m3),
-            "remanescentes_saldo_final_roteirizacao_total": _safe_len(df_remanescente_m6_2),
-            "remanescentes_saldo_final_roteirizacao_retornado": len(saldo_final_roteirizacao),
+        "auditoria_modular": {
+            "teste_id_auditoria": teste_id_auditoria,
+            "modulos": [{"modulo": modulo, "linhas_gravadas": linhas} for modulo, linhas in auditoria_por_modulo.items()],
+            "snapshots": [{"snapshot_nome": snapshot_nome, "linhas_gravadas": linhas} for snapshot_nome, linhas in auditoria_por_snapshot.items()],
+            "colunas_persistidas": sorted(list(auditoria_flat_rastreamento.get("colunas_persistidas", set()))),
         },
         "auditoria_m7": auditoria_m7,
         "logs": logs,
@@ -2566,6 +2566,8 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
                     df_itens_manifestos_sequenciados_m7,
                     "df_itens_manifestos_sequenciados_m7",
                 ),
+                "df_paradas_m7": _snapshot_dataframe(df_paradas_m7, "df_paradas_m7"),
+                "df_auditoria_m7": _snapshot_dataframe(df_auditoria_m7, "df_auditoria_m7"),
                 "df_manifestos_sequenciamento_resumo_m7": _snapshot_dataframe(
                     df_manifestos_sequenciamento_resumo_m7,
                     "df_manifestos_sequenciamento_resumo_m7",
@@ -2579,26 +2581,8 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
                     "df_diagnostico_recuperacao_coordenadas_m7",
                 ),
             },
-            "resumos_dataframes": {
-                "df_manifestos_m7": _montar_resumo_dataframe(df_manifestos_m7, "df_manifestos_m7"),
-                "df_itens_manifestos_sequenciados_m7": _montar_resumo_dataframe(
-                    df_itens_manifestos_sequenciados_m7,
-                    "df_itens_manifestos_sequenciados_m7",
-                ),
-                "df_manifestos_sequenciamento_resumo_m7": _montar_resumo_dataframe(
-                    df_manifestos_sequenciamento_resumo_m7,
-                    "df_manifestos_sequenciamento_resumo_m7",
-                ),
-                "df_tentativas_sequenciamento_m7": _montar_resumo_dataframe(
-                    df_tentativas_sequenciamento_m7,
-                    "df_tentativas_sequenciamento_m7",
-                ),
-                "df_diagnostico_recuperacao_coordenadas_m7": _montar_resumo_dataframe(
-                    df_diagnostico_recuperacao_coordenadas_m7,
-                    "df_diagnostico_recuperacao_coordenadas_m7",
-                ),
-            },
         }
+
 
     return resposta
 
