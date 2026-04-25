@@ -1590,6 +1590,7 @@ def executar_m7_sequenciamento_entregas(
     data_base_roteirizacao: Optional[datetime] = None,
     tipo_roteirizacao: str = "carteira",
     caminhos_pipeline: Optional[Dict[str, Any]] = None,
+    filial_contexto: Optional[Dict[str, Any]] = None,
     time_limit_seconds: int = TIME_LIMIT_SECONDS_PADRAO,
     fator_km_rodoviario_m7: float = FATOR_KM_RODOVIARIO_M7_PADRAO,
 ) -> Tuple[Dict[str, pd.DataFrame], Dict[str, Any]]:
@@ -1650,8 +1651,9 @@ def executar_m7_sequenciamento_entregas(
 
     df_itens, df_diagnostico_recuperacao_coordenadas_m7 = _preparar_coordenadas_contrato(df_itens)
 
-    filial_cidade_global: Optional[str] = None
-    filial_uf_global: Optional[str] = None
+    filial_cidade_global: Optional[str] = _safe_text((filial_contexto or {}).get("cidade"))
+    filial_uf_global: Optional[str] = _safe_text((filial_contexto or {}).get("uf"))
+    fonte_filial_global = "contexto" if filial_cidade_global else ""
 
     candidatos_cidade_filial = [
         "origem_cidade",
@@ -1666,23 +1668,28 @@ def executar_m7_sequenciamento_entregas(
         "uf_filial",
     ]
 
-    for col in candidatos_cidade_filial:
-        if col in df_itens.columns:
-            serie = df_itens[col].dropna().astype(str).str.strip()
-            if not serie.empty:
-                valor = serie.iloc[0]
-                if valor:
-                    filial_cidade_global = valor
-                    break
+    if not filial_cidade_global:
+        for col in candidatos_cidade_filial:
+            if col in df_itens.columns:
+                serie = df_itens[col].dropna().astype(str).str.strip()
+                if not serie.empty:
+                    valor = serie.iloc[0]
+                    if valor:
+                        filial_cidade_global = valor
+                        fonte_filial_global = "itens"
+                        break
 
-    for col in candidatos_uf_filial:
-        if col in df_itens.columns:
-            serie = df_itens[col].dropna().astype(str).str.strip()
-            if not serie.empty:
-                valor = serie.iloc[0]
-                if valor:
-                    filial_uf_global = valor
-                    break
+    if not filial_uf_global:
+        for col in candidatos_uf_filial:
+            if col in df_itens.columns:
+                serie = df_itens[col].dropna().astype(str).str.strip()
+                if not serie.empty:
+                    valor = serie.iloc[0]
+                    if valor:
+                        filial_uf_global = valor
+                        if not fonte_filial_global:
+                            fonte_filial_global = "itens"
+                        break
 
     resultados: List[pd.DataFrame] = []
     resumos_manifestos: List[Dict[str, Any]] = []
@@ -1692,6 +1699,7 @@ def executar_m7_sequenciamento_entregas(
 
     for manifesto_id, grupo in df_itens.groupby("manifesto_id", dropna=False):
         grupo = grupo.copy().reset_index(drop=True)
+        fonte_filial_manifesto = fonte_filial_global or "fallback_proximidade"
 
         try:
             if grupo["latitude_dest_m7"].isna().any() or grupo["longitude_dest_m7"].isna().any():
@@ -1716,6 +1724,11 @@ def executar_m7_sequenciamento_entregas(
                 filial_cidade=filial_cidade_global,
                 filial_uf=filial_uf_global,
             )
+            if bool(grupo_seq.get("cidade_origem_flag_m7", pd.Series(dtype=bool)).astype(bool).any()):
+                fonte_filial_manifesto = fonte_filial_global or "itens"
+            else:
+                fonte_filial_manifesto = "fallback_proximidade"
+            grupo_seq["fonte_filial_m7"] = fonte_filial_manifesto
 
             grupo_seq["status_sequenciamento_m7"] = "ok"
             grupo_seq["motivo_status_sequenciamento_m7"] = "sequenciamento_realizado"
@@ -1729,6 +1742,9 @@ def executar_m7_sequenciamento_entregas(
             resumos_manifestos.append(
                 {
                     "manifesto_id": manifesto_id,
+                    "filial_cidade_resolvida_m7": filial_cidade_global,
+                    "filial_uf_resolvida_m7": filial_uf_global,
+                    "fonte_filial_m7": fonte_filial_manifesto,
                     "qtd_docs_manifesto_m7": int(len(grupo_seq)),
                     "qtd_paradas_manifesto_m7": int(grupo_seq["chave_parada_seq_m7"].nunique()),
                     "qtd_cidades_manifesto_m7": int(grupo_seq["chave_cidade_seq_m7"].nunique()),
@@ -1749,6 +1765,7 @@ def executar_m7_sequenciamento_entregas(
                     "manifesto_id": manifesto_id,
                     "resultado": "ok",
                     "motivo": "sequenciamento_realizado",
+                    "fonte_filial_m7": fonte_filial_manifesto,
                     "qtd_docs": int(len(grupo_seq)),
                     "qtd_paradas": int(df_paradas_seq.shape[0]),
                     "qtd_cidades": int(df_cidades_seq.shape[0]),
@@ -1759,8 +1776,15 @@ def executar_m7_sequenciamento_entregas(
             auditorias_manifestos.append(
                 {
                     "manifesto_id": manifesto_id,
+                    "filial_cidade_resolvida_m7": filial_cidade_global,
+                    "filial_uf_resolvida_m7": filial_uf_global,
+                    "fonte_filial_m7": fonte_filial_manifesto,
                     **auditoria_local,
                 }
+            )
+            print(
+                f"[M7] manifesto={manifesto_id} filial_cidade_resolvida={filial_cidade_global} "
+                f"filial_uf_resolvida={filial_uf_global} fonte_filial_m7={fonte_filial_manifesto}"
             )
 
         except Exception as e:
@@ -1802,6 +1826,7 @@ def executar_m7_sequenciamento_entregas(
             grupo_fallback["motivo_status_sequenciamento_m7"] = str(e)
             grupo_fallback["metodo_sequenciamento_parada_m7"] = "fallback_regra"
             grupo_fallback["metodo_sequenciamento_cidade_m7"] = "fallback_regra"
+            grupo_fallback["fonte_filial_m7"] = "fallback_proximidade"
             grupo_fallback["justificativa_ordem_entrega_m7"] = grupo_fallback.apply(
                 lambda row: f"Fallback por exceção; criterio_doc={_montar_justificativa_doc(row)}; motivo={str(e)}",
                 axis=1,
@@ -1821,6 +1846,9 @@ def executar_m7_sequenciamento_entregas(
             resumos_manifestos.append(
                 {
                     "manifesto_id": manifesto_id,
+                    "filial_cidade_resolvida_m7": filial_cidade_global,
+                    "filial_uf_resolvida_m7": filial_uf_global,
+                    "fonte_filial_m7": "fallback_proximidade",
                     "qtd_docs_manifesto_m7": int(len(grupo_fallback)),
                     "qtd_paradas_manifesto_m7": int(grupo_fallback["chave_parada_seq_m7"].nunique()),
                     "qtd_cidades_manifesto_m7": int(grupo_fallback["chave_cidade_seq_m7"].nunique()),
@@ -1840,12 +1868,17 @@ def executar_m7_sequenciamento_entregas(
                 {
                     "manifesto_id": manifesto_id,
                     "resultado": "fallback",
+                    "fonte_filial_m7": "fallback_proximidade",
                     "motivo": str(e),
                     "qtd_docs": int(len(grupo_fallback)),
                     "qtd_paradas": int(grupo_fallback["chave_parada_seq_m7"].nunique()),
                     "qtd_cidades": int(grupo_fallback["chave_cidade_seq_m7"].nunique()),
                     "km_total_sequencia_paradas_m7": None,
                 }
+            )
+            print(
+                f"[M7] manifesto={manifesto_id} filial_cidade_resolvida={filial_cidade_global} "
+                f"filial_uf_resolvida={filial_uf_global} fonte_filial_m7=fallback_proximidade"
             )
 
     df_itens_manifestos_sequenciados_m7 = (

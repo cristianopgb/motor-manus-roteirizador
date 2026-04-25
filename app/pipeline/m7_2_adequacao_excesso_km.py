@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import math
+import traceback
 from itertools import combinations
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 
@@ -223,7 +224,9 @@ def executar_m7_2_adequacao_excesso_km(
     df_manifestos_acima_km_m7_1: pd.DataFrame | None,
     data_base_roteirizacao: Any = None,
     caminhos_pipeline: Dict[str, Any] | None = None,
+    filial_contexto: Optional[Dict[str, Any]] = None,
 ) -> tuple[Dict[str, pd.DataFrame], Dict[str, Any]]:
+    del filial_contexto
     df_manifestos = df_manifestos_reavaliados_m7_1.copy() if isinstance(df_manifestos_reavaliados_m7_1, pd.DataFrame) else pd.DataFrame()
     df_itens = df_itens_reavaliados_m7_1.copy() if isinstance(df_itens_reavaliados_m7_1, pd.DataFrame) else pd.DataFrame()
     df_acima = df_manifestos_acima_km_m7_1.copy() if isinstance(df_manifestos_acima_km_m7_1, pd.DataFrame) else pd.DataFrame()
@@ -258,99 +261,143 @@ def executar_m7_2_adequacao_excesso_km(
         g = grupo.copy().reset_index(drop=True)
         base = mref.loc[mref["_manifesto_key"].eq(m_id)].head(1)
         row_manifesto = base.iloc[0] if not base.empty else pd.Series(dtype=object)
+        try:
+            cidade_filial = _safe_text(row_manifesto.get("cidade_filial_m7_1")).upper()
+            fator_km = _inferir_fator_km(g)
 
-        cidade_filial = _safe_text(row_manifesto.get("cidade_filial_m7_1")).upper()
-        fator_km = _inferir_fator_km(g)
+            if m_id not in acima_ids:
+                g_keep = _sequenciar_manifesto_restante(g, cidade_filial)
+                g_keep["status_item_m7_2"] = "mantido"
+                finais.append(g_keep)
+                continue
 
-        if m_id not in acima_ids:
-            g_keep = _sequenciar_manifesto_restante(g, cidade_filial)
-            g_keep["status_item_m7_2"] = "mantido"
-            finais.append(g_keep)
-            continue
+            max_km = _safe_float(row_manifesto.get("max_km_distancia_veiculo"), float("inf"))
+            ocup_min = _safe_float(row_manifesto.get("ocupacao_minima_perc_veiculo"), 0.0)
 
-        max_km = _safe_float(row_manifesto.get("max_km_distancia_veiculo"), float("inf"))
-        ocup_min = _safe_float(row_manifesto.get("ocupacao_minima_perc_veiculo"), 0.0)
+            g_base = _sequenciar_manifesto_restante(g, cidade_filial)
+            km_original = _calcular_km_rota(g_base, fator_km)
+            ocup_original, _ = _calc_ocupacao(g_base, row_manifesto)
 
-        g_base = _sequenciar_manifesto_restante(g, cidade_filial)
-        km_original = _calcular_km_rota(g_base, fator_km)
-        ocup_original, _ = _calc_ocupacao(g_base, row_manifesto)
+            stats_cidades = _cidade_stats(g_base, cidade_filial)
+            candidatas = stats_cidades["cidade"].astype(str).tolist()
 
-        stats_cidades = _cidade_stats(g_base, cidade_filial)
-        candidatas = stats_cidades["cidade"].astype(str).tolist()
+            melhor = None
 
-        melhor = None
-
-        for cidade in candidatas:
-            g_keep, g_remove = _aplicar_remocao(g_base, [cidade])
-            g_keep = _sequenciar_manifesto_restante(g_keep, cidade_filial)
-            km_new = _calcular_km_rota(g_keep, fator_km)
-            ocup_new, _ = _calc_ocupacao(g_keep, row_manifesto)
-            ok = (km_new <= max_km) and (ocup_new >= ocup_min)
-            print(f"[M7.2] manifesto={m_id} tentativa=remocao_1_cidade cidades={[cidade]} km_resultante={km_new:.2f} ocupacao_resultante={ocup_new:.2f} aceito={ok}")
-            tentativas.append({"manifesto_id": m_id, "tipo_tentativa": "remocao_1_cidade", "cidades_testadas": [cidade], "km_resultante": km_new, "ocupacao_resultante": ocup_new, "aceito": ok, "motivo": "avaliacao"})
-            if ok:
-                melhor = ("remocao_1_cidade", [cidade], g_keep, g_remove, km_new, ocup_new)
-                break
-
-        if melhor is None and candidatas:
-            top4 = candidatas[:4]
-            for par in combinations(top4, 2):
-                cidades_par = list(par)
-                g_keep, g_remove = _aplicar_remocao(g_base, cidades_par)
+            for cidade in candidatas:
+                g_keep, g_remove = _aplicar_remocao(g_base, [cidade])
                 g_keep = _sequenciar_manifesto_restante(g_keep, cidade_filial)
                 km_new = _calcular_km_rota(g_keep, fator_km)
                 ocup_new, _ = _calc_ocupacao(g_keep, row_manifesto)
                 ok = (km_new <= max_km) and (ocup_new >= ocup_min)
-                print(f"[M7.2] manifesto={m_id} tentativa=remocao_2_cidades cidades={cidades_par} km_resultante={km_new:.2f} ocupacao_resultante={ocup_new:.2f} aceito={ok}")
-                tentativas.append({"manifesto_id": m_id, "tipo_tentativa": "remocao_2_cidades", "cidades_testadas": cidades_par, "km_resultante": km_new, "ocupacao_resultante": ocup_new, "aceito": ok, "motivo": "avaliacao"})
+                print(f"[M7.2] manifesto={m_id} tentativa=remocao_1_cidade cidades={[cidade]} km_resultante={km_new:.2f} ocupacao_resultante={ocup_new:.2f} aceito={ok}")
+                tentativas.append({"manifesto_id": m_id, "tipo_tentativa": "remocao_1_cidade", "cidades_testadas": [cidade], "km_resultante": km_new, "ocupacao_resultante": ocup_new, "aceito": ok, "motivo": "avaliacao"})
                 if ok:
-                    melhor = ("remocao_2_cidades", cidades_par, g_keep, g_remove, km_new, ocup_new)
+                    melhor = ("remocao_1_cidade", [cidade], g_keep, g_remove, km_new, ocup_new)
                     break
 
-        if melhor is None:
-            g_ret = g_base.copy()
-            g_ret["status_item_m7_2"] = "retirado"
-            g_ret["motivo_retirada_m7_2"] = "manifesto_desfeito_por_excesso_km_sem_solucao"
-            retirados.append(g_ret)
-            desfeitos.append({"manifesto_id": m_id, "manifesto_desfeito_m7_2": True, "motivo_ajuste_m7_2": "manifesto_desfeito_por_excesso_km_sem_solucao"})
-            tentativas.append({"manifesto_id": m_id, "tipo_tentativa": "desfeito", "cidades_testadas": [], "km_resultante": None, "ocupacao_resultante": None, "aceito": False, "motivo": "sem_solucao"})
-            print(f"[M7.2] manifesto={m_id} status_final=desfeito km_final=None ocupacao_final=None")
+            if melhor is None and candidatas:
+                top4 = candidatas[:4]
+                for par in combinations(top4, 2):
+                    cidades_par = list(par)
+                    g_keep, g_remove = _aplicar_remocao(g_base, cidades_par)
+                    g_keep = _sequenciar_manifesto_restante(g_keep, cidade_filial)
+                    km_new = _calcular_km_rota(g_keep, fator_km)
+                    ocup_new, _ = _calc_ocupacao(g_keep, row_manifesto)
+                    ok = (km_new <= max_km) and (ocup_new >= ocup_min)
+                    print(f"[M7.2] manifesto={m_id} tentativa=remocao_2_cidades cidades={cidades_par} km_resultante={km_new:.2f} ocupacao_resultante={ocup_new:.2f} aceito={ok}")
+                    tentativas.append({"manifesto_id": m_id, "tipo_tentativa": "remocao_2_cidades", "cidades_testadas": cidades_par, "km_resultante": km_new, "ocupacao_resultante": ocup_new, "aceito": ok, "motivo": "avaliacao"})
+                    if ok:
+                        melhor = ("remocao_2_cidades", cidades_par, g_keep, g_remove, km_new, ocup_new)
+                        break
+
+            if melhor is None:
+                g_ret = g_base.copy()
+                g_ret["status_item_m7_2"] = "retirado"
+                g_ret["motivo_retirada_m7_2"] = "manifesto_desfeito_por_excesso_km_sem_solucao"
+                retirados.append(g_ret)
+                desfeitos.append({"manifesto_id": m_id, "manifesto_desfeito_m7_2": True, "motivo_ajuste_m7_2": "manifesto_desfeito_por_excesso_km_sem_solucao"})
+                tentativas.append({"manifesto_id": m_id, "tipo_tentativa": "desfeito", "cidades_testadas": [], "km_resultante": None, "ocupacao_resultante": None, "aceito": False, "motivo": "sem_solucao"})
+                print(f"[M7.2] manifesto={m_id} status_final=desfeito km_final=None ocupacao_final=None")
+                res_manifestos.append({
+                    "manifesto_id": m_id,
+                    "status_final_m7_2": "desfeito",
+                    "km_total_reavaliado_m7_1": km_original,
+                    "km_total_final_m7_2": None,
+                    "ocupacao_original_m7_2": ocup_original,
+                    "ocupacao_final_m7_2": None,
+                    "cidade_removida_m7_2": None,
+                    "quantidade_cidades_removidas_m7_2": 0,
+                    "manifesto_desfeito_m7_2": True,
+                    "motivo_ajuste_m7_2": "manifesto_desfeito_por_excesso_km_sem_solucao",
+                })
+                continue
+
+            _, cidades_rm, g_keep, g_remove, km_new, ocup_new = melhor
+            g_keep["status_item_m7_2"] = "mantido"
+            finais.append(g_keep)
+
+            g_remove = g_remove.copy()
+            g_remove["status_item_m7_2"] = "retirado"
+            g_remove["motivo_retirada_m7_2"] = "remocao_cidade_por_excesso_km"
+            retirados.append(g_remove)
+
+            print(f"[M7.2] manifesto={m_id} status_final=ajustado km_final={km_new:.2f} ocupacao_final={ocup_new:.2f}")
             res_manifestos.append({
                 "manifesto_id": m_id,
-                "status_final_m7_2": "desfeito",
+                "status_final_m7_2": "ajustado",
                 "km_total_reavaliado_m7_1": km_original,
-                "km_total_final_m7_2": None,
+                "km_total_final_m7_2": km_new,
                 "ocupacao_original_m7_2": ocup_original,
-                "ocupacao_final_m7_2": None,
-                "cidade_removida_m7_2": None,
-                "quantidade_cidades_removidas_m7_2": 0,
-                "manifesto_desfeito_m7_2": True,
-                "motivo_ajuste_m7_2": "manifesto_desfeito_por_excesso_km_sem_solucao",
+                "ocupacao_final_m7_2": ocup_new,
+                "cidade_removida_m7_2": "|".join(cidades_rm),
+                "quantidade_cidades_removidas_m7_2": len(cidades_rm),
+                "manifesto_desfeito_m7_2": False,
+                "motivo_ajuste_m7_2": "remocao_cidade_por_excesso_km",
             })
-            continue
-
-        _, cidades_rm, g_keep, g_remove, km_new, ocup_new = melhor
-        g_keep["status_item_m7_2"] = "mantido"
-        finais.append(g_keep)
-
-        g_remove = g_remove.copy()
-        g_remove["status_item_m7_2"] = "retirado"
-        g_remove["motivo_retirada_m7_2"] = "remocao_cidade_por_excesso_km"
-        retirados.append(g_remove)
-
-        print(f"[M7.2] manifesto={m_id} status_final=ajustado km_final={km_new:.2f} ocupacao_final={ocup_new:.2f}")
-        res_manifestos.append({
-            "manifesto_id": m_id,
-            "status_final_m7_2": "ajustado",
-            "km_total_reavaliado_m7_1": km_original,
-            "km_total_final_m7_2": km_new,
-            "ocupacao_original_m7_2": ocup_original,
-            "ocupacao_final_m7_2": ocup_new,
-            "cidade_removida_m7_2": "|".join(cidades_rm),
-            "quantidade_cidades_removidas_m7_2": len(cidades_rm),
-            "manifesto_desfeito_m7_2": False,
-            "motivo_ajuste_m7_2": "remocao_cidade_por_excesso_km",
-        })
+        except Exception as exc:
+            mensagem_erro = f"{exc.__class__.__name__}: {exc}"
+            print(f"[M7.2][ERRO] manifesto={m_id} erro={mensagem_erro}")
+            tb = traceback.format_exc(limit=2)
+            g_err = g.copy()
+            g_err["status_item_m7_2"] = "retirado"
+            g_err["motivo_retirada_m7_2"] = "erro_manifesto_m7_2"
+            g_err["mensagem_erro_m7_2"] = mensagem_erro
+            retirados.append(g_err)
+            desfeitos.append(
+                {
+                    "manifesto_id": m_id,
+                    "manifesto_desfeito_m7_2": True,
+                    "motivo_ajuste_m7_2": "erro_manifesto_m7_2",
+                    "mensagem_erro_m7_2": mensagem_erro,
+                }
+            )
+            tentativas.append(
+                {
+                    "manifesto_id": m_id,
+                    "tipo_tentativa": "erro_manifesto",
+                    "cidades_testadas": [],
+                    "km_resultante": None,
+                    "ocupacao_resultante": None,
+                    "aceito": False,
+                    "motivo": mensagem_erro,
+                    "mensagem_erro_m7_2": tb[:500],
+                }
+            )
+            res_manifestos.append(
+                {
+                    "manifesto_id": m_id,
+                    "status_final_m7_2": "desfeito",
+                    "km_total_reavaliado_m7_1": None,
+                    "km_total_final_m7_2": None,
+                    "ocupacao_original_m7_2": None,
+                    "ocupacao_final_m7_2": None,
+                    "cidade_removida_m7_2": None,
+                    "quantidade_cidades_removidas_m7_2": 0,
+                    "manifesto_desfeito_m7_2": True,
+                    "motivo_ajuste_m7_2": "erro_manifesto_m7_2",
+                    "mensagem_erro_m7_2": mensagem_erro,
+                }
+            )
 
     df_manifestos_ajustados = pd.DataFrame(res_manifestos)
     df_itens_finais = pd.concat(finais, ignore_index=True) if finais else pd.DataFrame()
