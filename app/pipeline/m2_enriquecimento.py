@@ -186,6 +186,35 @@ def executar_m2_enriquecimento(
         ),
         axis=1,
     )
+    carteira["angulo_origem_destino_graus"] = carteira.apply(
+        lambda row: _calcular_angulo_origem_destino_graus(
+            row["origem_latitude"],
+            row["origem_longitude"],
+            row["latitude_destinatario"],
+            row["longitude_destinatario"],
+        ),
+        axis=1,
+    )
+    carteira["eixo_8_setores"] = carteira["angulo_origem_destino_graus"].apply(
+        _classificar_eixo_8_setores
+    )
+    carteira["corredor_30g"] = carteira["angulo_origem_destino_graus"].apply(
+        _classificar_corredor_30g
+    )
+    carteira["corredor_30g_idx"] = carteira["angulo_origem_destino_graus"].apply(
+        _classificar_corredor_30g_idx
+    )
+
+    amostra_eixo = carteira.loc[carteira["angulo_origem_destino_graus"].notna()].head(5)
+    for _, linha in amostra_eixo.iterrows():
+        print(
+            "[M2 EIXO] "
+            f"origem=({linha['origem_latitude']},{linha['origem_longitude']}), "
+            f"destino=({linha['latitude_destinatario']},{linha['longitude_destinatario']}), "
+            f"angulo={linha['angulo_origem_destino_graus']:.2f}, "
+            f"eixo={linha['eixo_8_setores']}, "
+            f"corredor={linha['corredor_30g']}"
+        )
 
     carteira["data_limite_considerada"] = np.where(
         (carteira["agendada"] == True) & (carteira["data_agenda"].notna()),
@@ -389,6 +418,10 @@ def executar_m2_enriquecimento(
         "distancia_rodoviaria_est_km",
         "faixa_km_cd",
         "quadrante",
+        "angulo_origem_destino_graus",
+        "eixo_8_setores",
+        "corredor_30g",
+        "corredor_30g_idx",
         "perfil_veiculo_referencia",
         "status_geo",
     ]
@@ -417,6 +450,15 @@ def executar_m2_enriquecimento(
         "horas_direcao_dia": horas_direcao_dia,
         "km_dia_operacional": km_dia_operacional,
         "distancia_km_nulos": int(df_carteira_enriquecida["distancia_km"].isna().sum()),
+        "angulo_origem_destino_nulos": int(
+            df_carteira_enriquecida["angulo_origem_destino_graus"].isna().sum()
+        ),
+        "eixo_8_setores_sem_eixo": int(
+            (df_carteira_enriquecida["eixo_8_setores"] == "sem_eixo").sum()
+        ),
+        "corredor_30g_sem_corredor": int(
+            (df_carteira_enriquecida["corredor_30g"] == "sem_corredor").sum()
+        ),
         "transit_time_nulos": int(df_carteira_enriquecida["transit_time_dias"].isna().sum()),
         "folga_nulos": int(df_carteira_enriquecida["folga_dias"].isna().sum()),
         "regiao_nulos": int(df_carteira_enriquecida["regiao"].isna().sum()),
@@ -609,6 +651,84 @@ def _haversine_km(lat1: Any, lon1: Any, lat2: Any, lon2: Any) -> float:
     c = 2 * math.asin(math.sqrt(a))
 
     return raio_terra * c
+
+
+def _calcular_angulo_origem_destino_graus(
+    lat_origem: Any,
+    lon_origem: Any,
+    lat_destino: Any,
+    lon_destino: Any,
+) -> float:
+    coord_origem_ok, _ = _coordenadas_validas(lat_origem, lon_origem)
+    coord_destino_ok, _ = _coordenadas_validas(lat_destino, lon_destino)
+    if not coord_origem_ok or not coord_destino_ok:
+        return np.nan
+
+    lat1 = math.radians(float(lat_origem))
+    lon1 = math.radians(float(lon_origem))
+    lat2 = math.radians(float(lat_destino))
+    lon2 = math.radians(float(lon_destino))
+
+    delta_lon = lon2 - lon1
+    x = math.sin(delta_lon) * math.cos(lat2)
+    y = (
+        math.cos(lat1) * math.sin(lat2)
+        - math.sin(lat1) * math.cos(lat2) * math.cos(delta_lon)
+    )
+
+    angulo = (math.degrees(math.atan2(x, y)) + 360.0) % 360.0
+    return angulo
+
+
+def _classificar_eixo_8_setores(angulo: Any) -> str:
+    if pd.isna(angulo):
+        return "sem_eixo"
+
+    angulo = float(angulo) % 360.0
+    if angulo >= 337.5 or angulo < 22.5:
+        return "N"
+    if angulo < 67.5:
+        return "NE"
+    if angulo < 112.5:
+        return "E"
+    if angulo < 157.5:
+        return "SE"
+    if angulo < 202.5:
+        return "S"
+    if angulo < 247.5:
+        return "SO"
+    if angulo < 292.5:
+        return "O"
+    return "NO"
+
+
+def _classificar_corredor_30g_idx(angulo: Any) -> Any:
+    if pd.isna(angulo):
+        return np.nan
+    angulo = float(angulo) % 360.0
+    return int(angulo // 30) + 1
+
+
+def _classificar_corredor_30g(angulo: Any) -> str:
+    idx = _classificar_corredor_30g_idx(angulo)
+    if pd.isna(idx):
+        return "sem_corredor"
+
+    rotulos = {
+        1: "C01_000-029",
+        2: "C02_030-059",
+        3: "C03_060-089",
+        4: "C04_090-119",
+        5: "C05_120-149",
+        6: "C06_150-179",
+        7: "C07_180-209",
+        8: "C08_210-239",
+        9: "C09_240-269",
+        10: "C10_270-299",
+        11: "C11_300-329",
+        12: "C12_330-359",
+    }
+    return rotulos.get(int(idx), "sem_corredor")
 
 
 def _calcular_transit_time_dias(km_rodoviario: Any, km_dia_operacional: float) -> Any:
