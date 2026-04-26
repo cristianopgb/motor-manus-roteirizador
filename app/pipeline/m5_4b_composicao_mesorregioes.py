@@ -386,7 +386,7 @@ def _validar_fechamento(
         }
 
     corredor_ancora, corredores_considerados, diff_corredor_max = _metricas_corredor(candidato_ajustado)
-    if diff_corredor_max is not None and diff_corredor_max > 1:
+    if diff_corredor_max is not None and diff_corredor_max > 2:
         km_estimado, fonte_km_estimado = _km_total_estimado_candidato(candidato_ajustado)
         return False, "corredor_distante", candidato_ajustado, {
             "km_total_estimado_candidato": km_estimado,
