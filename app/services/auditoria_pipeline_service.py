@@ -41,6 +41,7 @@ COLUNAS_AUDITORIA_FLAT: List[str] = [
     "ranking_preliminar", "score_prioridade_preliminar", "subregiao", "data_limite_considerada",
     "tipo_data_limite", "dias_ate_data_alvo", "horas_viagem_estimadas", "transit_time_dias", "folga_dias",
     "status_folga", "distancia_km", "distancia_rodoviaria_est_km", "faixa_km_cd", "quadrante",
+    "angulo_origem_destino_graus", "eixo_8_setores", "corredor_30g", "corredor_30g_idx",
     "perfil_veiculo_referencia", "status_geo", "origem_latitude", "origem_longitude", "status_triagem",
     "motivo_triagem", "grupo_saida", "prioridade_label", "ranking_prioridade_operacional", "flag_roteirizavel",
     "flag_agendamento_futuro", "flag_agenda_vencida", "id_linha_pipeline",

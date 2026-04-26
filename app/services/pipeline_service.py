@@ -33,11 +33,11 @@ PIPELINE_FLAGS = {
     "executar_m5_2": True,
     "executar_m5_3a": True,
     "executar_m5_3b": True,
-    "executar_m5_4a": True,
-    "executar_m5_4b": True,
-    "executar_m6_1": True,
-    "executar_m6_2": True,
-    "executar_m7": True,
+    "executar_m5_4a": False,
+    "executar_m5_4b": False,
+    "executar_m6_1": False,
+    "executar_m6_2": False,
+    "executar_m7": False,
 }
 
 
@@ -1301,6 +1301,10 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             "df_itens_premanifestos_m5_3": pd.DataFrame(columns=_copiar_ou_vazio(df_saldo_elegivel_composicao_m5_3).columns.tolist()),
             "df_tentativas_m5_3": pd.DataFrame(columns=["resultado", "motivo"]),
             "df_remanescente_m5_3": _copiar_ou_vazio(df_saldo_elegivel_composicao_m5_3),
+            "df_pool_subregiao_m5_3": pd.DataFrame(),
+            "df_blocos_cliente_subregiao_m5_3": pd.DataFrame(),
+            "df_manifestos_m5_3": pd.DataFrame(columns=["manifesto_id", "tipo_manifesto"]),
+            "df_itens_manifestos_m5_3": pd.DataFrame(columns=_copiar_ou_vazio(df_saldo_elegivel_composicao_m5_3).columns.tolist()),
         }
         meta_m5_3b = {"resumo_m5_3b": {"modulo": "M5.3B", "etapa_pulada": True, "motivo_etapa_pulada": motivo_pulo, "linhas_entrada_m5_3": _safe_len(df_saldo_elegivel_composicao_m5_3), "linhas_saida_m5_3": 0, "remanescente_preservado_m5_3": _safe_len(df_saldo_elegivel_composicao_m5_3)}}
     tempo_m5_3b = _duracao_ms(t0)
@@ -1311,10 +1315,20 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     df_itens_premanifestos_m5_3 = outputs_m5_3b["df_itens_premanifestos_m5_3"]
     df_tentativas_m5_3 = outputs_m5_3b["df_tentativas_m5_3"]
     df_remanescente_m5_3 = outputs_m5_3b["df_remanescente_m5_3"]
+    df_pool_subregiao_m5_3 = outputs_m5_3b.get("df_pool_subregiao_m5_3", pd.DataFrame())
+    df_blocos_cliente_subregiao_m5_3 = outputs_m5_3b.get("df_blocos_cliente_subregiao_m5_3", pd.DataFrame())
+    df_manifestos_m5_3 = outputs_m5_3b.get("df_manifestos_m5_3", df_premanifestos_m5_3)
+    df_itens_manifestos_m5_3 = outputs_m5_3b.get("df_itens_manifestos_m5_3", df_itens_premanifestos_m5_3)
     print(f"[M5.3B] df_premanifestos_m5_3 linhas={_safe_len(df_premanifestos_m5_3)}")
     print(f"[M5.3B] df_itens_premanifestos_m5_3 linhas={_safe_len(df_itens_premanifestos_m5_3)}")
     print(f"[M5.3B] df_remanescente_m5_3 linhas={_safe_len(df_remanescente_m5_3)}")
     print(f"[M5.3B] df_tentativas_m5_3 linhas={_safe_len(df_tentativas_m5_3)}")
+    print(f"[M5.3] df_pool_subregiao_m5_3 linhas={_safe_len(df_pool_subregiao_m5_3)}")
+    print(f"[M5.3] df_blocos_cliente_subregiao_m5_3 linhas={_safe_len(df_blocos_cliente_subregiao_m5_3)}")
+    print(f"[M5.3] df_tentativas_m5_3 linhas={_safe_len(df_tentativas_m5_3)}")
+    print(f"[M5.3] df_manifestos_m5_3 linhas={_safe_len(df_manifestos_m5_3)}")
+    print(f"[M5.3] df_itens_manifestos_m5_3 linhas={_safe_len(df_itens_manifestos_m5_3)}")
+    print(f"[M5.3] df_remanescente_m5_3 linhas={_safe_len(df_remanescente_m5_3)}")
 
     logs.append(
         _log(
@@ -1331,50 +1345,35 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             },
         )
     )
-    total_m5_3_premanifestos = persistir_snapshot_modulo_auditoria(
+    total_m5_3_pool_subregiao = persistir_snapshot_modulo_auditoria(
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
         modulo="m5_3b_composicao_subregioes",
         ordem_modulo=10,
-        df_etapa=df_premanifestos_m5_3,
-        snapshot_nome="m5_3_premanifestos",
+        df_etapa=df_pool_subregiao_m5_3,
+        snapshot_nome="m5_3_pool_subregiao",
         contexto=contexto_auditoria,
         rastreamento=auditoria_flat_rastreamento,
     )
-    auditoria_por_modulo["m5_3b_composicao_subregioes"] = auditoria_por_modulo.get("m5_3b_composicao_subregioes", 0) + total_m5_3_premanifestos
-    auditoria_por_snapshot["m5_3_premanifestos"] = auditoria_por_snapshot.get("m5_3_premanifestos", 0) + total_m5_3_premanifestos
-    print(f"[AUDITORIA FLAT] snapshot=m5_3_premanifestos linhas={total_m5_3_premanifestos}")
+    auditoria_por_modulo["m5_3b_composicao_subregioes"] = auditoria_por_modulo.get("m5_3b_composicao_subregioes", 0) + total_m5_3_pool_subregiao
+    auditoria_por_snapshot["m5_3_pool_subregiao"] = auditoria_por_snapshot.get("m5_3_pool_subregiao", 0) + total_m5_3_pool_subregiao
+    print(f"[AUDITORIA FLAT] snapshot=m5_3_pool_subregiao linhas={total_m5_3_pool_subregiao}")
 
-    total_m5_3_itens_premanifestos = persistir_snapshot_modulo_auditoria(
+    total_m5_3_blocos_cliente = persistir_snapshot_modulo_auditoria(
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
         modulo="m5_3b_composicao_subregioes",
         ordem_modulo=10,
-        df_etapa=df_itens_premanifestos_m5_3,
-        snapshot_nome="m5_3_itens_premanifestos",
+        df_etapa=df_blocos_cliente_subregiao_m5_3,
+        snapshot_nome="m5_3_blocos_cliente",
         contexto=contexto_auditoria,
         rastreamento=auditoria_flat_rastreamento,
     )
-    auditoria_por_modulo["m5_3b_composicao_subregioes"] = auditoria_por_modulo.get("m5_3b_composicao_subregioes", 0) + total_m5_3_itens_premanifestos
-    auditoria_por_snapshot["m5_3_itens_premanifestos"] = auditoria_por_snapshot.get("m5_3_itens_premanifestos", 0) + total_m5_3_itens_premanifestos
-    print(f"[AUDITORIA FLAT] snapshot=m5_3_itens_premanifestos linhas={total_m5_3_itens_premanifestos}")
-
-    total_m5_3_remanescente = persistir_snapshot_modulo_auditoria(
-        teste_id=teste_id_auditoria,
-        rodada_id=contexto.rodada_id,
-        upload_id=contexto.upload_id,
-        modulo="m5_3b_composicao_subregioes",
-        ordem_modulo=10,
-        df_etapa=df_remanescente_m5_3,
-        snapshot_nome="m5_3_remanescente",
-        contexto=contexto_auditoria,
-        rastreamento=auditoria_flat_rastreamento,
-    )
-    auditoria_por_modulo["m5_3b_composicao_subregioes"] = auditoria_por_modulo.get("m5_3b_composicao_subregioes", 0) + total_m5_3_remanescente
-    auditoria_por_snapshot["m5_3_remanescente"] = auditoria_por_snapshot.get("m5_3_remanescente", 0) + total_m5_3_remanescente
-    print(f"[AUDITORIA FLAT] snapshot=m5_3_remanescente linhas={total_m5_3_remanescente}")
+    auditoria_por_modulo["m5_3b_composicao_subregioes"] = auditoria_por_modulo.get("m5_3b_composicao_subregioes", 0) + total_m5_3_blocos_cliente
+    auditoria_por_snapshot["m5_3_blocos_cliente"] = auditoria_por_snapshot.get("m5_3_blocos_cliente", 0) + total_m5_3_blocos_cliente
+    print(f"[AUDITORIA FLAT] snapshot=m5_3_blocos_cliente linhas={total_m5_3_blocos_cliente}")
 
     total_m5_3_tentativas = persistir_snapshot_modulo_auditoria(
         teste_id=teste_id_auditoria,
@@ -1390,6 +1389,51 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     auditoria_por_modulo["m5_3b_composicao_subregioes"] = auditoria_por_modulo.get("m5_3b_composicao_subregioes", 0) + total_m5_3_tentativas
     auditoria_por_snapshot["m5_3_tentativas"] = auditoria_por_snapshot.get("m5_3_tentativas", 0) + total_m5_3_tentativas
     print(f"[AUDITORIA FLAT] snapshot=m5_3_tentativas linhas={total_m5_3_tentativas}")
+
+    total_m5_3_manifestos = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m5_3b_composicao_subregioes",
+        ordem_modulo=10,
+        df_etapa=df_manifestos_m5_3,
+        snapshot_nome="m5_3_manifestos",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m5_3b_composicao_subregioes"] = auditoria_por_modulo.get("m5_3b_composicao_subregioes", 0) + total_m5_3_manifestos
+    auditoria_por_snapshot["m5_3_manifestos"] = auditoria_por_snapshot.get("m5_3_manifestos", 0) + total_m5_3_manifestos
+    print(f"[AUDITORIA FLAT] snapshot=m5_3_manifestos linhas={total_m5_3_manifestos}")
+
+    total_m5_3_itens_manifestados = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m5_3b_composicao_subregioes",
+        ordem_modulo=10,
+        df_etapa=df_itens_manifestos_m5_3,
+        snapshot_nome="m5_3_itens_manifestados",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m5_3b_composicao_subregioes"] = auditoria_por_modulo.get("m5_3b_composicao_subregioes", 0) + total_m5_3_itens_manifestados
+    auditoria_por_snapshot["m5_3_itens_manifestados"] = auditoria_por_snapshot.get("m5_3_itens_manifestados", 0) + total_m5_3_itens_manifestados
+    print(f"[AUDITORIA FLAT] snapshot=m5_3_itens_manifestados linhas={total_m5_3_itens_manifestados}")
+
+    total_m5_3_remanescente = persistir_snapshot_modulo_auditoria(
+        teste_id=teste_id_auditoria,
+        rodada_id=contexto.rodada_id,
+        upload_id=contexto.upload_id,
+        modulo="m5_3b_composicao_subregioes",
+        ordem_modulo=10,
+        df_etapa=df_remanescente_m5_3,
+        snapshot_nome="m5_3_remanescente",
+        contexto=contexto_auditoria,
+        rastreamento=auditoria_flat_rastreamento,
+    )
+    auditoria_por_modulo["m5_3b_composicao_subregioes"] = auditoria_por_modulo.get("m5_3b_composicao_subregioes", 0) + total_m5_3_remanescente
+    auditoria_por_snapshot["m5_3_remanescente"] = auditoria_por_snapshot.get("m5_3_remanescente", 0) + total_m5_3_remanescente
+    print(f"[AUDITORIA FLAT] snapshot=m5_3_remanescente linhas={total_m5_3_remanescente}")
 
     df_remanescente_global_ate_m5_3 = _consolidar_remanescente_global(
         df_saldo_nao_elegivel_m5_3,
