@@ -35,8 +35,8 @@ PIPELINE_FLAGS = {
     "executar_m5_3b": True,
     "executar_m5_4a": True,
     "executar_m5_4b": True,
-    "executar_m6_1": False,
-    "executar_m6_2": False,
+    "executar_m6_1": True,
+    "executar_m6_2": True,
     "executar_m7": False,
 }
 
@@ -2194,7 +2194,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             data_base_roteirizacao=contexto.data_base,
             tipo_roteirizacao=contexto.tipo_roteirizacao,
             caminhos_pipeline=contexto.caminhos_pipeline,
-            ocupacao_alvo_perc=95.0,
+            ocupacao_alvo_perc=85.0,
         )
     else:
         resultado_m6_2 = {
@@ -2218,7 +2218,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
                 "modulo": "M6.2",
                 "data_base_roteirizacao": contexto.data_base.isoformat(),
                 "tipo_roteirizacao": contexto.tipo_roteirizacao,
-                "ocupacao_alvo_perc": 95.0,
+                "ocupacao_alvo_perc": 85.0,
                 "etapa_pulada": True,
                 "motivo_etapa_pulada": "sem_manifestos_base_m6_2",
                 "manifestos_base_total_m6_1": _safe_len(df_manifestos_base_m6_input),
@@ -2370,7 +2370,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         print(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
         return {
             "status": "ok",
-            "mensagem": "Execucao encerrada propositalmente apos o M6.2 para auditoria do complemento de ocupacao.",
+            "mensagem": "Execução encerrada propositalmente após o M6.2 para auditoria operacional desta etapa.",
             "pipeline_real_ate": "M6.2",
             "modo_resposta": "auditoria_m6_2_modular",
             "resposta_truncada": False,

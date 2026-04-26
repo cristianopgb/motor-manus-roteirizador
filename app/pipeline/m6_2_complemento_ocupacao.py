@@ -85,8 +85,36 @@ COLS_REMANESCENTE_OBRIGATORIAS = [
 ]
 
 CHAVES_PARADA = ["destinatario", "cidade", "uf"]
-COLS_TENTATIVAS_M6_2 = ["manifesto_id", "tipo_tentativa", "nivel_hierarquia", "aceito", "motivo"]
-COLS_MOVIMENTOS_M6_2 = ["manifesto_id", "nivel_hierarquia", "id_linha_pipeline", "aceito"]
+COLS_TENTATIVAS_M6_2 = [
+    "manifesto_id",
+    "tipo_tentativa",
+    "nivel_hierarquia",
+    "aceito",
+    "motivo",
+    "corredor_item_candidato_m6_2",
+    "corredor_manifesto_ancora_m6_2",
+    "diff_corredor_m6_2",
+    "km_total_estimado_manifesto_pos_encaixe",
+    "fonte_km_estimado_m6_2",
+    "motivo_detalhado_m6_2",
+]
+COLS_MOVIMENTOS_M6_2 = [
+    "manifesto_id",
+    "nivel_hierarquia",
+    "id_linha_pipeline",
+    "aceito",
+    "corredor_item_candidato_m6_2",
+    "corredor_manifesto_ancora_m6_2",
+    "diff_corredor_m6_2",
+    "km_total_estimado_manifesto_pos_encaixe",
+]
+FATOR_RODOVIARIO_M6_2 = 1.20
+COLS_GEO_ANGULAR = [
+    "angulo_origem_destino_graus",
+    "eixo_8_setores",
+    "corredor_30g",
+    "corredor_30g_idx",
+]
 
 
 def _tem_schema_minimo(df: Optional[pd.DataFrame], colunas_obrigatorias: List[str]) -> bool:
@@ -219,6 +247,9 @@ def executar_m6_2_complemento_ocupacao(
         df_itens["flag_otimizado_m6_2"] = False
     if "origem_item_m6_2" not in df_itens.columns:
         df_itens["origem_item_m6_2"] = "original_m6_1"
+    for col_geo in COLS_GEO_ANGULAR:
+        if col_geo not in df_itens.columns:
+            df_itens[col_geo] = np.nan
 
     df_manifestos["perfil_final_m6_2"] = (
         df_manifestos["veiculo_perfil"].replace("", np.nan).fillna(df_manifestos["veiculo_tipo"])
@@ -238,6 +269,9 @@ def executar_m6_2_complemento_ocupacao(
     df_manifestos["paradas_disponiveis_m6_2"] = (
         df_manifestos["max_paradas_veiculo"] - df_manifestos["qtd_paradas_base_antes_m6"]
     ).clip(lower=0)
+    df_manifestos["km_total_estimado_m6_2"] = df_manifestos["km_base_antes_m6"]
+    df_manifestos["corredor_ancora_m6_2"] = np.nan
+    df_manifestos["diff_corredor_max_m6_2"] = np.nan
 
     manifestos_alvo = _selecionar_manifestos_alvo(df_manifestos, ocupacao_alvo_perc)
 
@@ -395,6 +429,7 @@ def executar_m6_2_complemento_ocupacao(
                         "folga_dias": _to_float(item_row.get("folga_dias")),
                         "aceito": bool(valido),
                         "motivo": motivo,
+                        "motivo_detalhado_m6_2": motivo,
                         **comparativo,
                     }
                     tentativas.append(tentativa)
@@ -559,6 +594,7 @@ def _normalizar_itens_manifestos(df: pd.DataFrame) -> pd.DataFrame:
     if "restricao_veiculo" not in out.columns:
         out["restricao_veiculo"] = ""
     out["restricao_veiculo"] = out["restricao_veiculo"].fillna("").astype(str)
+    out = _garantir_colunas_geo_m6_2(out)
 
     return out.reset_index(drop=True)
 
@@ -589,8 +625,23 @@ def _normalizar_remanescente(df: pd.DataFrame) -> pd.DataFrame:
     if "folga_dias" not in out.columns:
         out["folga_dias"] = np.nan
     out["folga_dias"] = pd.to_numeric(out["folga_dias"], errors="coerce")
+    out = _garantir_colunas_geo_m6_2(out)
 
     return out.reset_index(drop=True)
+
+
+def _garantir_colunas_geo_m6_2(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    for col in COLS_GEO_ANGULAR:
+        if col not in out.columns:
+            out[col] = np.nan
+    if "corredor_30g_idx" in out.columns:
+        out["corredor_30g_idx"] = pd.to_numeric(out["corredor_30g_idx"], errors="coerce")
+    for col in ["origem_latitude", "origem_longitude", "latitude_destinatario", "longitude_destinatario"]:
+        if col not in out.columns:
+            out[col] = np.nan
+        out[col] = pd.to_numeric(out[col], errors="coerce")
+    return out
 
 
 def _validar_colunas_minimas(df: pd.DataFrame, cols: List[str], nome_df: str) -> None:
@@ -769,6 +820,13 @@ def _simular_adicao_item_por_folga(
 
     itens_depois = pd.concat([itens_manifesto, item_candidato], ignore_index=True)
     estado_depois = _calcular_estado_manifesto(manifesto, itens_depois)
+    corredor_manifesto, fonte_corredor_manifesto = _corredor_dominante_manifesto(itens_manifesto)
+    corredor_item = _to_int(item.get("corredor_30g_idx"))
+    diff_corredor = _diff_corredor_circular(corredor_manifesto, corredor_item)
+    km_total_estimado_manifesto_pos_encaixe, fonte_km_estimado_m6_2 = _estimar_km_total_manifesto_heuristico(
+        manifesto,
+        itens_depois,
+    )
 
     comparativo = {
         "ocupacao_antes_perc": round(ocupacao_antes, 4),
@@ -781,6 +839,12 @@ def _simular_adicao_item_por_folga(
         "qtd_paradas_depois": int(estado_depois["qtd_paradas_final_m6_2"]),
         "espaco_disponivel_antes_kg": round(float(estado_atual["espaco_disponivel_peso_kg"]), 4),
         "espaco_disponivel_depois_kg": round(float(estado_depois["espaco_disponivel_peso_kg"]), 4),
+        "corredor_item_candidato_m6_2": corredor_item,
+        "corredor_manifesto_ancora_m6_2": corredor_manifesto,
+        "diff_corredor_m6_2": diff_corredor,
+        "km_total_estimado_manifesto_pos_encaixe": km_total_estimado_manifesto_pos_encaixe,
+        "fonte_km_estimado_m6_2": fonte_km_estimado_m6_2,
+        "fonte_corredor_manifesto_m6_2": fonte_corredor_manifesto,
     }
 
     if bool(manifesto.get("veiculo_exclusivo_flag", False)) is True:
@@ -794,6 +858,9 @@ def _simular_adicao_item_por_folga(
 
     if max_km_veiculo > 0 and km_item > max_km_veiculo:
         return False, "Item excede o raio máximo do perfil do veículo.", comparativo
+
+    if corredor_manifesto is not None and corredor_item is not None and diff_corredor is not None and diff_corredor > 2:
+        return False, "corredor_distante_m6_2", comparativo
 
     if estado_depois["qtd_paradas_final_m6_2"] > _to_int(manifesto.get("max_paradas_veiculo"), default=0):
         return False, "Item excede o limite de paradas do veículo.", comparativo
@@ -810,6 +877,12 @@ def _simular_adicao_item_por_folga(
 
     if float(estado_depois["ocupacao_final_m6_2"]) <= ocupacao_antes:
         return False, "Item não melhora a ocupação do manifesto.", comparativo
+
+    if fonte_km_estimado_m6_2 == "fallback_sem_coordenadas_m6_2":
+        return False, "fallback_sem_coordenadas_m6_2", comparativo
+
+    if max_km_veiculo > 0 and km_total_estimado_manifesto_pos_encaixe > max_km_veiculo:
+        return False, "excede_max_km_total_m6_2", comparativo
 
     return True, "Item aceito no complemento de ocupação.", comparativo
 
@@ -840,8 +913,115 @@ def _recalcular_manifesto_unico(
     out.loc[i, "flag_otimizado_m6_2"] = bool(
         estado["qtd_itens_final_m6_2"] > _to_int(out.loc[i, "qtd_itens_base_antes_m6"], default=0)
     )
+    corredor_ancora, _ = _corredor_dominante_manifesto(itens)
+    diff_max = _diff_corredor_max_manifesto(itens, corredor_ancora)
+    km_total_estimado_manifesto, _ = _estimar_km_total_manifesto_heuristico(manifesto, itens)
+    out.loc[i, "km_total_estimado_m6_2"] = km_total_estimado_manifesto
+    out.loc[i, "corredor_ancora_m6_2"] = corredor_ancora
+    out.loc[i, "diff_corredor_max_m6_2"] = diff_max
 
     return out
+
+
+def _corredor_dominante_manifesto(df_itens_manifesto: pd.DataFrame) -> Tuple[Optional[int], str]:
+    if not isinstance(df_itens_manifesto, pd.DataFrame) or df_itens_manifesto.empty:
+        return None, "manifesto_sem_itens"
+    if "corredor_30g_idx" not in df_itens_manifesto.columns:
+        return None, "corredor_coluna_inexistente"
+    serie = pd.to_numeric(df_itens_manifesto["corredor_30g_idx"], errors="coerce").dropna().astype(int)
+    serie = serie[(serie >= 1) & (serie <= 12)]
+    if serie.empty:
+        return None, "corredor_indisponivel_manifesto"
+    moda = serie.mode()
+    if moda.empty:
+        return None, "corredor_indisponivel_manifesto"
+    return int(moda.iloc[0]), "corredor_dominante_manifesto"
+
+
+def _diff_corredor_circular(corredor_a: Optional[int], corredor_b: Optional[int]) -> Optional[int]:
+    if corredor_a is None or corredor_b is None:
+        return None
+    if not (1 <= int(corredor_a) <= 12 and 1 <= int(corredor_b) <= 12):
+        return None
+    diff_abs = abs(int(corredor_a) - int(corredor_b))
+    return int(min(diff_abs, 12 - diff_abs))
+
+
+def _diff_corredor_max_manifesto(df_itens_manifesto: pd.DataFrame, corredor_ancora: Optional[int]) -> Optional[int]:
+    if corredor_ancora is None or "corredor_30g_idx" not in df_itens_manifesto.columns:
+        return None
+    serie = pd.to_numeric(df_itens_manifesto["corredor_30g_idx"], errors="coerce").dropna().astype(int)
+    serie = serie[(serie >= 1) & (serie <= 12)]
+    if serie.empty:
+        return None
+    diffs = [_diff_corredor_circular(corredor_ancora, int(v)) for v in serie.tolist()]
+    diffs = [d for d in diffs if d is not None]
+    return int(max(diffs)) if diffs else None
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    raio_terra_km = 6371.0
+    lat1_rad = np.radians(lat1)
+    lon1_rad = np.radians(lon1)
+    lat2_rad = np.radians(lat2)
+    lon2_rad = np.radians(lon2)
+    dlat = lat2_rad - lat1_rad
+    dlon = lon2_rad - lon1_rad
+    a = np.sin(dlat / 2.0) ** 2 + np.cos(lat1_rad) * np.cos(lat2_rad) * np.sin(dlon / 2.0) ** 2
+    c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+    return float(raio_terra_km * c)
+
+
+def _estimar_km_total_manifesto_heuristico(manifesto: Dict[str, Any], df_itens_manifesto: pd.DataFrame) -> Tuple[float, str]:
+    if not isinstance(df_itens_manifesto, pd.DataFrame) or df_itens_manifesto.empty:
+        return 0.0, "manifesto_sem_itens"
+
+    origem_lat = _to_float(manifesto.get("origem_latitude"))
+    origem_lon = _to_float(manifesto.get("origem_longitude"))
+    if origem_lat is None or origem_lon is None:
+        origem_lat = _to_float(df_itens_manifesto.get("origem_latitude", pd.Series(dtype=float)).dropna().head(1).iloc[0]) if "origem_latitude" in df_itens_manifesto.columns and not df_itens_manifesto["origem_latitude"].dropna().empty else None
+        origem_lon = _to_float(df_itens_manifesto.get("origem_longitude", pd.Series(dtype=float)).dropna().head(1).iloc[0]) if "origem_longitude" in df_itens_manifesto.columns and not df_itens_manifesto["origem_longitude"].dropna().empty else None
+    if origem_lat is None or origem_lon is None:
+        return float(_to_float(manifesto.get("km_base_antes_m6"), default=0.0) or 0.0), "fallback_sem_coordenadas_m6_2"
+
+    base = df_itens_manifesto.copy()
+    if "latitude_destinatario" not in base.columns or "longitude_destinatario" not in base.columns:
+        return float(_to_float(manifesto.get("km_base_antes_m6"), default=0.0) or 0.0), "fallback_sem_coordenadas_m6_2"
+
+    base["latitude_destinatario"] = pd.to_numeric(base["latitude_destinatario"], errors="coerce")
+    base["longitude_destinatario"] = pd.to_numeric(base["longitude_destinatario"], errors="coerce")
+    base = base.dropna(subset=["latitude_destinatario", "longitude_destinatario"])
+    if base.empty:
+        return float(_to_float(manifesto.get("km_base_antes_m6"), default=0.0) or 0.0), "fallback_sem_coordenadas_m6_2"
+
+    base["cidade_uf_chave"] = base["cidade"].astype(str).str.strip().str.upper() + "|" + base["uf"].astype(str).str.strip().str.upper()
+    cidades = (
+        base.groupby("cidade_uf_chave", as_index=False)
+        .agg({
+            "latitude_destinatario": "mean",
+            "longitude_destinatario": "mean",
+            "distancia_rodoviaria_est_km": "min",
+        })
+        .sort_values(by=["distancia_rodoviaria_est_km", "cidade_uf_chave"], ascending=[True, True])
+        .reset_index(drop=True)
+    )
+    if cidades.empty:
+        return float(_to_float(manifesto.get("km_base_antes_m6"), default=0.0) or 0.0), "fallback_sem_coordenadas_m6_2"
+
+    km_total = _haversine_km(
+        origem_lat,
+        origem_lon,
+        float(cidades.iloc[0]["latitude_destinatario"]),
+        float(cidades.iloc[0]["longitude_destinatario"]),
+    )
+    for i in range(1, len(cidades)):
+        km_total += _haversine_km(
+            float(cidades.iloc[i - 1]["latitude_destinatario"]),
+            float(cidades.iloc[i - 1]["longitude_destinatario"]),
+            float(cidades.iloc[i]["latitude_destinatario"]),
+            float(cidades.iloc[i]["longitude_destinatario"]),
+        )
+    return round(float(km_total) * FATOR_RODOVIARIO_M6_2, 4), "heuristica_haversine_1_20_m6_2"
 
 
 def _recalcular_todos_manifestos(df_manifestos: pd.DataFrame, df_itens: pd.DataFrame) -> pd.DataFrame:
