@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from itertools import combinations
+from math import atan2, cos, radians, sin, sqrt
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -24,6 +25,7 @@ MAX_CLIENTES_BASE = 10
 MAX_PREFIXOS_POR_PERFIL = 8
 MAX_TROCAS_1 = 20
 MAX_TROCAS_2 = 30
+FATOR_KM_RODOVIARIO_PADRAO_M5_3 = 1.20
 
 COLS_PREMANIFESTOS_M5_3 = [
     "manifesto_id", "tipo_manifesto", "subregiao", "veiculo_tipo", "veiculo_perfil", "qtd_itens",
@@ -31,10 +33,12 @@ COLS_PREMANIFESTOS_M5_3 = [
     "km_referencia", "ocupacao_oficial_perc", "capacidade_peso_kg_veiculo", "capacidade_vol_m3_veiculo",
     "max_entregas_veiculo", "max_km_distancia_veiculo", "ocupacao_minima_perc_veiculo",
     "ocupacao_maxima_perc_veiculo", "ignorar_ocupacao_minima", "origem_modulo", "origem_etapa",
+    "km_total_estimado_m5_3", "corredor_ancora_m5_3", "diff_corredor_max_m5_3",
 ]
 
 COLS_TENTATIVAS_M5_3 = [
     "subregiao", "tentativa_idx", "blocos_considerados", "veiculo_tipo_tentado", "veiculo_perfil_tentado",
+    "corredores_considerados", "corredor_ancora", "diff_corredor_max", "km_total_estimado_candidato",
     "resultado", "motivo", "qtd_itens_candidato", "qtd_paradas_candidato", "peso_total_candidato",
     "peso_kg_total_candidato", "volume_total_candidato", "km_referencia_candidato", "ocupacao_perc_candidato",
 ]
@@ -120,6 +124,34 @@ def _agrupar_blocos_cliente_na_subregiao(pool_df: pd.DataFrame, suffix: str) -> 
     )
 
     grouped["ordem_bloco_desc"] = range(1, len(grouped) + 1)
+    grouped["qtd_itens_bloco"] = grouped.get("qtd_linhas_bloco", 0)
+    if "corredor_30g_idx" in temp.columns:
+        corr_stats = (
+            temp.groupby([cliente_key_col, "destinatario"], dropna=False)["corredor_30g_idx"]
+            .agg(
+                corredor_dominante_bloco=lambda s: pd.to_numeric(s, errors="coerce").dropna().astype(int).mode().iloc[0]
+                if not pd.to_numeric(s, errors="coerce").dropna().empty else None,
+                corredor_min_idx=lambda s: pd.to_numeric(s, errors="coerce").dropna().astype(int).min()
+                if not pd.to_numeric(s, errors="coerce").dropna().empty else None,
+                corredor_max_idx=lambda s: pd.to_numeric(s, errors="coerce").dropna().astype(int).max()
+                if not pd.to_numeric(s, errors="coerce").dropna().empty else None,
+                qtd_corredores_bloco=lambda s: pd.to_numeric(s, errors="coerce").dropna().astype(int).nunique(),
+            )
+            .reset_index()
+        )
+        grouped = grouped.merge(corr_stats, on=[cliente_key_col, "destinatario"], how="left")
+        grouped["corredor_dominante_bloco"] = grouped["corredor_dominante_bloco"].apply(
+            lambda x: f"C{int(x):02d}" if pd.notna(x) else None
+        )
+    if "eixo_8_setores" in temp.columns:
+        eixo_stats = (
+            temp.groupby([cliente_key_col, "destinatario"], dropna=False)["eixo_8_setores"]
+            .agg(
+                eixo_dominante_bloco=lambda s: s.dropna().astype(str).mode().iloc[0] if not s.dropna().empty else None,
+            )
+            .reset_index()
+        )
+        grouped = grouped.merge(eixo_stats, on=[cliente_key_col, "destinatario"], how="left")
     return grouped
 
 
@@ -153,6 +185,114 @@ def _km_referencia_manifesto(df_itens: pd.DataFrame) -> float:
         return 0.0
 
     return float(pd.to_numeric(df_itens["distancia_rodoviaria_est_km"], errors="coerce").fillna(0).max())
+
+
+def _safe_corridor_idx(valor: Any) -> Optional[int]:
+    num = safe_int(valor, 0)
+    if num < 1 or num > 12:
+        return None
+    return num
+
+
+def _diff_corredor_circular(idx_a: Optional[int], idx_b: Optional[int]) -> Optional[int]:
+    if idx_a is None or idx_b is None:
+        return None
+    bruto = abs(int(idx_a) - int(idx_b))
+    return int(min(bruto, 12 - bruto))
+
+
+def _obter_corredor_ancora(df_itens: pd.DataFrame) -> Optional[int]:
+    if df_itens is None or df_itens.empty or "corredor_30g_idx" not in df_itens.columns:
+        return None
+    serie = pd.to_numeric(df_itens["corredor_30g_idx"], errors="coerce").dropna().astype(int)
+    serie = serie[(serie >= 1) & (serie <= 12)]
+    if serie.empty:
+        return None
+    return int(serie.mode(dropna=True).iloc[0])
+
+
+def _metricas_corredor(df_itens: pd.DataFrame, corredor_ancora: Optional[int]) -> Tuple[List[str], Optional[int]]:
+    if df_itens is None or df_itens.empty or "corredor_30g_idx" not in df_itens.columns:
+        return [], None
+    corredores = (
+        pd.to_numeric(df_itens["corredor_30g_idx"], errors="coerce")
+        .dropna()
+        .astype(int)
+        .tolist()
+    )
+    corredores = [c for c in corredores if 1 <= c <= 12]
+    if not corredores:
+        return [], None
+    corredores_considerados = sorted({f"C{c:02d}" for c in corredores})
+    if corredor_ancora is None:
+        return corredores_considerados, None
+    diffs = [_diff_corredor_circular(corredor_ancora, c) for c in corredores]
+    diffs_validos = [d for d in diffs if d is not None]
+    return corredores_considerados, (max(diffs_validos) if diffs_validos else None)
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    raio_terra_km = 6371.0
+    dlat = radians(lat2 - lat1)
+    dlon = radians(lon2 - lon1)
+    a = sin(dlat / 2.0) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2.0) ** 2
+    c = 2.0 * atan2(sqrt(a), sqrt(max(1e-12, 1.0 - a)))
+    return raio_terra_km * c
+
+
+def _estimar_km_total_candidato(df_itens: pd.DataFrame) -> Tuple[float, str]:
+    km_ref = _km_referencia_manifesto(df_itens)
+    if df_itens is None or df_itens.empty:
+        return 0.0, "sem_itens"
+
+    required_cols = {"origem_latitude", "origem_longitude", "latitude_destinatario", "longitude_destinatario"}
+    if not required_cols.issubset(set(df_itens.columns)):
+        return float(km_ref), "fallback_km_referencia_sem_colunas_coord"
+
+    origem_lat = pd.to_numeric(df_itens["origem_latitude"], errors="coerce").dropna()
+    origem_lon = pd.to_numeric(df_itens["origem_longitude"], errors="coerce").dropna()
+    if origem_lat.empty or origem_lon.empty:
+        return float(km_ref), "fallback_km_referencia_sem_coord_origem"
+
+    origem = (float(origem_lat.iloc[0]), float(origem_lon.iloc[0]))
+    temp = df_itens.copy()
+    temp["_lat"] = pd.to_numeric(temp["latitude_destinatario"], errors="coerce")
+    temp["_lon"] = pd.to_numeric(temp["longitude_destinatario"], errors="coerce")
+    temp["_km"] = pd.to_numeric(temp.get("distancia_rodoviaria_est_km", 0), errors="coerce").fillna(0)
+    temp = temp.dropna(subset=["_lat", "_lon"])
+    if temp.empty:
+        return float(km_ref), "fallback_km_referencia_sem_coord_destino"
+
+    chaves = [c for c in ["cidade", "destinatario"] if c in temp.columns]
+    if not chaves:
+        chaves = ["_lat", "_lon"]
+
+    blocos = (
+        temp.groupby(chaves, dropna=False)
+        .agg(lat=("_lat", "mean"), lon=("_lon", "mean"), km_ref=("_km", "max"))
+        .reset_index()
+        .sort_values(by=["km_ref"], ascending=[True], kind="mergesort")
+        .reset_index(drop=True)
+    )
+    if blocos.empty:
+        return float(km_ref), "fallback_km_referencia_sem_blocos"
+
+    fator = FATOR_KM_RODOVIARIO_PADRAO_M5_3
+    total = 0.0
+    atual_lat, atual_lon = origem
+    for _, bloco in blocos.iterrows():
+        lat_raw = bloco.get("lat")
+        lon_raw = bloco.get("lon")
+        if pd.isna(lat_raw) or pd.isna(lon_raw):
+            continue
+        lat = float(lat_raw)
+        lon = float(lon_raw)
+        total += _haversine_km(float(atual_lat), float(atual_lon), float(lat), float(lon)) * fator
+        atual_lat, atual_lon = float(lat), float(lon)
+
+    if total <= 0:
+        return float(km_ref), "fallback_km_referencia_total_zero"
+    return float(total), "ok_haversine_transicoes"
 
 
 def _remover_clientes_fora_do_raio(
@@ -194,6 +334,7 @@ def _validar_hard_constraints(
     df_itens: pd.DataFrame,
     vehicle_row: pd.Series,
     suffix: str,
+    corredor_ancora: Optional[int] = None,
 ) -> Tuple[bool, str, pd.DataFrame]:
     if df_itens.empty:
         return False, "grupo_vazio", df_itens.copy()
@@ -233,7 +374,15 @@ def _validar_hard_constraints(
     if max_entregas > 0 and paradas > max_entregas:
         return False, "excede_max_entregas", candidato
     if max_km > 0 and km_ref > max_km:
-        return False, "excede_max_km", candidato
+        return False, "excede_max_km_referencia", candidato
+
+    _, diff_corredor_max = _metricas_corredor(candidato, corredor_ancora)
+    if diff_corredor_max is not None and diff_corredor_max > 1:
+        return False, "corredor_distante", candidato
+
+    km_total_estimado, _ = _estimar_km_total_candidato(candidato)
+    if max_km > 0 and km_total_estimado > max_km:
+        return False, "excede_max_km_estimado", candidato
 
     ocup = ocupacao_perc(candidato, vehicle_row)
     if ocup > ocup_max:
@@ -249,11 +398,13 @@ def _validar_fechamento(
     df_itens: pd.DataFrame,
     vehicle_row: pd.Series,
     suffix: str,
+    corredor_ancora: Optional[int] = None,
 ) -> Tuple[bool, str, pd.DataFrame]:
     ok_hard, motivo_hard, candidato_ajustado = _validar_hard_constraints(
         df_itens=df_itens,
         vehicle_row=vehicle_row,
         suffix=suffix,
+        corredor_ancora=corredor_ancora,
     )
     if not ok_hard:
         return False, motivo_hard, candidato_ajustado
@@ -289,17 +440,26 @@ def _tentativa_dict(
     df_candidato: Optional[pd.DataFrame],
     tentativa_idx: int,
     blocos_considerados: int,
+    corredor_ancora: Optional[int] = None,
+    motivo_km_estimado: Optional[str] = None,
 ) -> Dict[str, Any]:
     candidato = df_candidato if df_candidato is not None else pd.DataFrame()
+    corredores_considerados, diff_corredor_max = _metricas_corredor(candidato, corredor_ancora)
+    km_total_estimado, motivo_estimativa = _estimar_km_total_candidato(candidato)
+    motivo_km_final = motivo_km_estimado or motivo_estimativa
 
     return {
         "subregiao": subregiao,
         "tentativa_idx": tentativa_idx,
         "blocos_considerados": blocos_considerados,
+        "corredores_considerados": ",".join(corredores_considerados),
+        "corredor_ancora": f"C{corredor_ancora:02d}" if corredor_ancora is not None else None,
+        "diff_corredor_max": diff_corredor_max,
+        "km_total_estimado_candidato": round(km_total_estimado, 2),
         "veiculo_tipo_tentado": None if vehicle_row is None else safe_text(vehicle_row.get("tipo")),
         "veiculo_perfil_tentado": None if vehicle_row is None else safe_text(vehicle_row.get("perfil")),
         "resultado": resultado,
-        "motivo": motivo,
+        "motivo": f"{motivo}|{motivo_km_final}" if motivo_km_final else motivo,
         "qtd_itens_candidato": int(len(candidato)),
         "qtd_paradas_candidato": _qtd_paradas_validas(candidato),
         "peso_total_candidato": round(peso_total(candidato), 3),
@@ -316,6 +476,14 @@ def _build_manifesto_id(seq: int) -> str:
     return f"PM53_{seq:04d}"
 
 
+def _garantir_colunas(df: pd.DataFrame, colunas: List[str]) -> pd.DataFrame:
+    base = df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame()
+    for col in colunas:
+        if col not in base.columns:
+            base[col] = None
+    return base
+
+
 def _build_manifesto(
     df_itens: pd.DataFrame,
     vehicle_row: pd.Series,
@@ -324,6 +492,9 @@ def _build_manifesto(
     suffix: str,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     df_itens_limpo = _drop_internal_cols(df_itens, suffix=suffix)
+    corredor_ancora_idx = _obter_corredor_ancora(df_itens_limpo)
+    _, diff_corredor_max = _metricas_corredor(df_itens_limpo, corredor_ancora_idx)
+    km_total_estimado, _ = _estimar_km_total_candidato(df_itens_limpo)
 
     qtd_itens = int(len(df_itens_limpo))
     qtd_ctes = int(df_itens_limpo["cte"].nunique(dropna=True)) if "cte" in df_itens_limpo.columns else qtd_itens
@@ -345,6 +516,9 @@ def _build_manifesto(
         "peso_total_kg": round(peso_auditoria_total(df_itens_limpo), 3),
         "vol_total_m3": round(volume_total(df_itens_limpo), 3),
         "km_referencia": round(_km_referencia_manifesto(df_itens_limpo), 2),
+        "km_total_estimado_m5_3": round(km_total_estimado, 2),
+        "corredor_ancora_m5_3": f"C{corredor_ancora_idx:02d}" if corredor_ancora_idx is not None else None,
+        "diff_corredor_max_m5_3": diff_corredor_max,
         "ocupacao_oficial_perc": round(ocupacao_perc(df_itens_limpo, vehicle_row), 2),
         "capacidade_peso_kg_veiculo": safe_float(vehicle_row.get("capacidade_peso_kg"), 0.0),
         "capacidade_vol_m3_veiculo": safe_float(vehicle_row.get("capacidade_vol_m3"), 0.0),
@@ -563,6 +737,7 @@ def _buscar_melhor_fechamento_na_subregiao(
                 df_candidato=pool_df,
                 tentativa_idx=1,
                 blocos_considerados=0,
+                corredor_ancora=None,
             )
         )
         return None, None, "sem_perfil_elegivel_na_subregiao"
@@ -598,6 +773,7 @@ def _buscar_melhor_fechamento_na_subregiao(
                     df_candidato=pd.DataFrame(),
                     tentativa_idx=tentativa_idx,
                     blocos_considerados=0,
+                    corredor_ancora=None,
                 )
             )
             tentativa_idx += 1
@@ -619,6 +795,7 @@ def _buscar_melhor_fechamento_na_subregiao(
                     df_candidato=pd.DataFrame(),
                     tentativa_idx=tentativa_idx,
                     blocos_considerados=0,
+                    corredor_ancora=None,
                 )
             )
             tentativa_idx += 1
@@ -626,10 +803,18 @@ def _buscar_melhor_fechamento_na_subregiao(
 
         for blocks_candidato in candidatos_blocos:
             candidato_bruto = _materializar_candidato_por_blocos(pool_df, blocks_candidato, suffix=suffix)
+            corredor_ancora = None
+            if "corredor_dominante_bloco" in blocks_candidato.columns and not blocks_candidato.empty:
+                valor_corr = safe_text(blocks_candidato.iloc[0].get("corredor_dominante_bloco"))
+                if valor_corr.startswith("C"):
+                    corredor_ancora = _safe_corridor_idx(valor_corr.replace("C", ""))
+            if corredor_ancora is None:
+                corredor_ancora = _obter_corredor_ancora(candidato_bruto)
             ok, motivo, candidato = _validar_fechamento(
                 df_itens=candidato_bruto,
                 vehicle_row=vehicle_row,
                 suffix=suffix,
+                corredor_ancora=corredor_ancora,
             )
 
             tentativas.append(
@@ -641,6 +826,7 @@ def _buscar_melhor_fechamento_na_subregiao(
                     df_candidato=candidato,
                     tentativa_idx=tentativa_idx,
                     blocos_considerados=int(len(blocks_candidato)),
+                    corredor_ancora=corredor_ancora,
                 )
             )
             tentativa_idx += 1
@@ -701,6 +887,10 @@ def executar_m5_3_composicao_subregioes(
             "df_itens_premanifestos_m5_3": _empty_like(list(df_remanescente.columns) + COLS_PREMANIFESTOS_M5_3),
             "df_tentativas_m5_3": _empty_like(COLS_TENTATIVAS_M5_3),
             "df_remanescente_m5_3": df_remanescente,
+            "df_pool_subregiao_m5_3": _empty_like([]),
+            "df_blocos_cliente_subregiao_m5_3": _empty_like([]),
+            "df_manifestos_m5_3": _empty_like(COLS_PREMANIFESTOS_M5_3),
+            "df_itens_manifestos_m5_3": _empty_like([]),
         }
         meta_vazio = {
             "resumo_m5_3b": {
@@ -744,6 +934,8 @@ def executar_m5_3_composicao_subregioes(
     manifestos_list: List[pd.DataFrame] = []
     itens_manifestados_list: List[pd.DataFrame] = []
     tentativas: List[Dict[str, Any]] = []
+    pool_subregiao_list: List[pd.DataFrame] = []
+    blocos_cliente_list: List[pd.DataFrame] = []
 
     manifesto_seq = 1
     subregioes_processadas = 0
@@ -760,6 +952,13 @@ def executar_m5_3_composicao_subregioes(
 
             if pool_df.empty:
                 break
+            pool_subregiao_list.append(_drop_internal_cols(pool_df, suffix=suffix))
+            blocos_snapshot = _agrupar_blocos_cliente_na_subregiao(pool_df, suffix=suffix)
+            if not blocos_snapshot.empty:
+                blocos_snapshot["subregiao"] = subregiao_key
+                if "cidade" not in blocos_snapshot.columns and "qtd_cidades_bloco" in blocos_snapshot.columns:
+                    blocos_snapshot["cidade"] = None
+                blocos_cliente_list.append(_drop_internal_cols(blocos_snapshot, suffix=suffix))
 
             candidato, vehicle_row, motivo = _buscar_melhor_fechamento_na_subregiao(
                 pool_df=pool_df,
@@ -775,6 +974,10 @@ def executar_m5_3_composicao_subregioes(
                         "subregiao": subregiao_key,
                         "tentativa_idx": None,
                         "blocos_considerados": 0,
+                        "corredores_considerados": "",
+                        "corredor_ancora": None,
+                        "diff_corredor_max": None,
+                        "km_total_estimado_candidato": round(_km_referencia_manifesto(pool_df), 2),
                         "veiculo_tipo_tentado": None,
                         "veiculo_perfil_tentado": None,
                         "resultado": "saldo",
@@ -826,6 +1029,34 @@ def executar_m5_3_composicao_subregioes(
 
     df_tentativas_m5_3 = pd.DataFrame(tentativas)
     df_remanescente_m5_3 = _drop_internal_cols(saldo.reset_index(drop=True), suffix=suffix)
+    if "motivo_final_remanescente_m5_3" not in df_remanescente_m5_3.columns:
+        df_remanescente_m5_3["motivo_final_remanescente_m5_3"] = "sem_fechamento_m5_3"
+    df_pool_subregiao_m5_3 = pd.concat(pool_subregiao_list, ignore_index=True) if pool_subregiao_list else pd.DataFrame()
+    df_blocos_cliente_subregiao_m5_3 = pd.concat(blocos_cliente_list, ignore_index=True) if blocos_cliente_list else pd.DataFrame()
+    df_manifestos_m5_3 = df_premanifestos_m5_3.copy()
+    df_itens_manifestos_m5_3 = df_itens_premanifestos_m5_3.copy()
+    df_pool_subregiao_m5_3 = _garantir_colunas(df_pool_subregiao_m5_3, [
+        "id_linha_pipeline", "nro_documento", "destinatario", "cidade", "uf", "subregiao", "mesorregiao",
+        "distancia_rodoviaria_est_km", "angulo_origem_destino_graus", "eixo_8_setores", "corredor_30g",
+        "corredor_30g_idx", "peso_calculado", "peso_kg", "vol_m3", "restricao_veiculo", "veiculo_exclusivo_flag",
+    ])
+    df_blocos_cliente_subregiao_m5_3 = _garantir_colunas(df_blocos_cliente_subregiao_m5_3, [
+        "subregiao", "destinatario", "cidade", "qtd_itens_bloco", "peso_total_bloco", "volume_total_bloco",
+        "km_referencia_bloco", "corredor_dominante_bloco", "corredor_min_idx", "corredor_max_idx",
+        "eixo_dominante_bloco", "qtd_corredores_bloco",
+    ])
+    df_tentativas_m5_3 = _garantir_colunas(df_tentativas_m5_3, COLS_TENTATIVAS_M5_3)
+    df_manifestos_m5_3 = _garantir_colunas(df_manifestos_m5_3, [
+        "subregiao", "manifesto_id", "veiculo_tipo", "veiculo_perfil", "peso_total_kg", "vol_total_m3",
+        "qtd_itens", "qtd_ctes", "qtd_paradas", "qtd_cidades", "km_referencia", "km_total_estimado_m5_3",
+        "corredor_ancora_m5_3", "diff_corredor_max_m5_3", "ocupacao_oficial_perc", "max_km_distancia_veiculo",
+        "ocupacao_minima_perc_veiculo",
+    ])
+    df_itens_manifestos_m5_3 = _garantir_colunas(df_itens_manifestos_m5_3, [
+        "manifesto_id", "subregiao", "id_linha_pipeline", "nro_documento", "cidade", "destinatario", "corredor_30g",
+        "corredor_30g_idx", "angulo_origem_destino_graus", "eixo_8_setores", "peso_calculado",
+        "distancia_rodoviaria_est_km",
+    ])
 
     resumo_m5_3b = {
         "modulo": "M5.3B",
@@ -861,6 +1092,10 @@ def executar_m5_3_composicao_subregioes(
         "df_itens_premanifestos_m5_3": df_itens_premanifestos_m5_3,
         "df_tentativas_m5_3": df_tentativas_m5_3,
         "df_remanescente_m5_3": df_remanescente_m5_3,
+        "df_pool_subregiao_m5_3": df_pool_subregiao_m5_3,
+        "df_blocos_cliente_subregiao_m5_3": df_blocos_cliente_subregiao_m5_3,
+        "df_manifestos_m5_3": df_manifestos_m5_3,
+        "df_itens_manifestos_m5_3": df_itens_manifestos_m5_3,
     }
 
     meta_m5_3 = {
