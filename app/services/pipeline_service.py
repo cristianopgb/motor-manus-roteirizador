@@ -2828,100 +2828,44 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     if "tempo_total_pipeline_ms" not in metricas_tempo:
         metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
 
-    print("[CONTRATO SISTEMA1] colunas df_manifestos_m7:", list(df_manifestos_m7.columns))
-    print("[CONTRATO SISTEMA1] colunas df_veiculos_tratados:", list(df_veiculos_tratados.columns))
+    manifestos_m7 = _serializar_dataframe_para_records(df_manifestos_m7, limit=None)
+    itens_manifestos_sequenciados_m7 = _serializar_dataframe_para_records(df_itens_manifestos_sequenciados_m7, limit=None)
+    manifestos_sequenciamento_resumo_m7 = _serializar_dataframe_para_records(
+        df_manifestos_sequenciamento_resumo_m7, limit=None
+    )
+    paradas_m7 = _serializar_dataframe_para_records(df_paradas_m7, limit=None)
+    saldo_final_roteirizacao = _serializar_dataframe_para_records(df_remanescente_m6_2, limit=None)
+
+    df_nao_roteirizaveis_m3_real = locals().get("df_nao_roteirizaveis_m3")
+    if isinstance(df_nao_roteirizaveis_m3_real, pd.DataFrame):
+        nao_roteirizaveis_m3 = _serializar_dataframe_para_records(df_nao_roteirizaveis_m3_real, limit=None)
+    else:
+        nao_roteirizaveis_m3 = []
+
+    manifestos_fechados: List[Dict[str, Any]] = []
+    manifestos_compostos: List[Dict[str, Any]] = []
+    for manifesto in manifestos_m7:
+        origem_tipo = str(manifesto.get("origem_manifesto_tipo", "")).strip().lower()
+        origem_modulo = str(manifesto.get("origem_manifesto_modulo", "")).strip().upper()
+        if "manifesto_fechado" in origem_tipo or origem_modulo == "M4":
+            manifestos_fechados.append(manifesto)
+        else:
+            manifestos_compostos.append(manifesto)
+
+    print("[RESPONSE] total manifestos_m7 serializados:", len(manifestos_m7))
+    print("[RESPONSE] total itens_manifestos_sequenciados_m7 serializados:", len(itens_manifestos_sequenciados_m7))
     print(
-        "[CONTRATO SISTEMA1] perfis manifestos:",
-        sorted(df_manifestos_m7["perfil_final_m6_2"].dropna().astype(str).unique().tolist())
-        if "perfil_final_m6_2" in df_manifestos_m7.columns
-        else [],
+        "[RESPONSE] total manifestos_sequenciamento_resumo_m7 serializados:",
+        len(manifestos_sequenciamento_resumo_m7),
     )
-    print(
-        "[CONTRATO SISTEMA1] perfis veiculos:",
-        sorted(df_veiculos_tratados["perfil"].dropna().astype(str).unique().tolist())
-        if "perfil" in df_veiculos_tratados.columns
-        else [],
-    )
-
-    df_manifestos_m7 = _anexar_dados_reais_veiculo_manifestos(
-        df_manifestos_m7=df_manifestos_m7,
-        df_veiculos_tratados=df_veiculos_tratados,
-    )
-
-    df_manifestos_m7_contrato = _selecionar_colunas_obrigatorias_contrato(
-        df_manifestos_m7,
-        [
-            "manifesto_id", "origem_manifesto_modulo", "origem_manifesto_tipo", "perfil_final_m6_2", "qtd_eixos",
-            "peso_final_m6_2", "ocupacao_final_m6_2", "km_total_estimado_m6_2", "qtd_itens_final_m6_2",
-            "qtd_paradas_final_m6_2", "capacidade_peso_kg_veiculo", "capacidade_vol_m3_veiculo", "max_entregas_veiculo",
-            "max_km_distancia_veiculo", "ocupacao_minima_perc_veiculo", "ocupacao_maxima_perc_veiculo",
-        ],
-        "manifestos_m7",
-    )
-    df_itens_manifestos_sequenciados_m7_contrato = _selecionar_colunas_obrigatorias_contrato(
-        df_itens_manifestos_sequenciados_m7,
-        [
-            "manifesto_id", "id_linha_pipeline", "nro_documento", "destinatario", "cidade", "uf", "peso_calculado",
-            "distancia_rodoviaria_est_km", "latitude_destinatario", "longitude_destinatario", "ordem_entrega_doc_m7",
-            "ordem_carregamento_doc_m7", "ordem_parada_m7", "ordem_entrega_parada_m7", "cidade_parada", "criterio_doc",
-            "status_sequenciamento_m7", "metodo_sequenciamento",
-        ],
-        "itens_manifestos_sequenciados_m7",
-    )
-    df_manifestos_sequenciamento_resumo_m7_contrato = _selecionar_colunas_obrigatorias_contrato(
-        df_manifestos_sequenciamento_resumo_m7,
-        [
-            "manifesto_id", "status_sequenciamento_m7", "metodo_predominante_m7", "qtd_docs", "qtd_paradas",
-            "qtd_cidades", "km_total_sequencia_paradas_m7", "km_total_sequencia_cidades_m7",
-        ],
-        "manifestos_sequenciamento_resumo_m7",
-    )
-    df_paradas_m7_contrato = _selecionar_colunas_obrigatorias_contrato(
-        df_paradas_m7,
-        [
-            "manifesto_id", "ordem_entrega_parada_m7", "chave_parada_seq_m7", "destinatario_ref_m7", "cidade_ref_m7",
-            "uf_ref_m7", "qtd_docs_parada_m7", "peso_total_m7", "distancia_origem_parada_km_m7", "lat_ref_m7", "lon_ref_m7",
-        ],
-        "paradas_m7",
-    )
-    df_nao_roteirizaveis_m3_contrato = _selecionar_colunas_reais_existentes(
-        _selecionar_colunas_obrigatorias_contrato(
-            df_nao_roteirizaveis_m3, ["id_linha_pipeline", "nro_documento", "destinatario", "cidade", "uf"], "nao_roteirizaveis_m3"
-        ),
-        [
-            "id_linha_pipeline", "nro_documento", "destinatario", "cidade", "uf", "peso_calculado", "distancia_rodoviaria_est_km",
-            "mesorregiao", "subregiao", "status_triagem", "motivo_triagem",
-        ],
-    )
-    df_remanescente_m6_2_contrato = _selecionar_colunas_reais_existentes(
-        _selecionar_colunas_obrigatorias_contrato(
-            df_remanescente_m6_2, ["id_linha_pipeline", "nro_documento", "destinatario", "cidade", "uf"], "saldo_final_roteirizacao"
-        ),
-        [
-            "id_linha_pipeline", "nro_documento", "destinatario", "cidade", "uf", "peso_calculado", "distancia_rodoviaria_est_km",
-            "mesorregiao", "subregiao", "corredor_30g", "corredor_30g_idx", "motivo_detalhado_m6_2",
-            "motivo_final_remanescente_m6_2", "motivo_final_remanescente_m5_4", "motivo_final_remanescente_m5_3",
-        ],
-    )
-    campos_motivo = [
-        "motivo_detalhado_m6_2",
-        "motivo_final_remanescente_m6_2",
-        "motivo_final_remanescente_m5_4",
-        "motivo_final_remanescente_m5_3",
-    ]
-    if not any(c in df_remanescente_m6_2_contrato.columns for c in campos_motivo):
-        raise Exception("Contrato Sistema 1 inválido: saldo_final_roteirizacao sem campo real de motivo")
-
-    _print_log(
-        f"[M7] df_itens_sequenciados_m7 linhas={_safe_len(df_itens_manifestos_sequenciados_m7_contrato)}",
-        force=not log_verbose,
-    )
+    print("[RESPONSE] total paradas_m7 serializadas:", len(paradas_m7))
+    print("[RESPONSE] total remanescentes saldo_final_roteirizacao:", len(saldo_final_roteirizacao))
 
     resposta: Dict[str, Any] = {
         "status": "ok",
-        "mensagem": "Roteirização concluída com sucesso até o M7.",
+        "mensagem": "Motor executou com sucesso até o M7 sequenciamento de entregas.",
         "pipeline_real_ate": "M7",
-        "modo_resposta": "contrato_sistema1_m7",
+        "modo_resposta": "auditoria_m7_sequenciamento_entregas",
         "resposta_truncada": False,
         "resumo_execucao": {
             "rodada_id": contexto.rodada_id,
@@ -2935,23 +2879,25 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         "resumo_negocio": {
             "total_carteira": _safe_len(contexto.df_carteira_raw),
             "total_roteirizavel_m3": _safe_len(df_carteira_roteirizavel),
-            "total_manifestos_m7": _safe_len(df_manifestos_m7_contrato),
-            "total_itens_sequenciados_m7": _safe_len(df_itens_manifestos_sequenciados_m7_contrato),
-            "total_remanescente_saldo_final": _safe_len(df_remanescente_m6_2_contrato),
-            "total_nao_roteirizaveis_m3": _safe_len(df_nao_roteirizaveis_m3_contrato),
-            "total_remanescentes_geral": _safe_len(df_remanescente_m6_2_contrato) + _safe_len(df_nao_roteirizaveis_m3_contrato),
-            "total_paradas_m7": _safe_len(df_paradas_m7_contrato),
-            "km_total_frota": float(df_manifestos_m7_contrato["km_total_estimado_m6_2"].sum()),
-            "ocupacao_media_percentual": float(df_manifestos_m7_contrato["ocupacao_final_m6_2"].mean()),
+            "total_manifestos_m7": _safe_len(df_manifestos_m7),
+            "total_itens_manifestos_sequenciados_m7": _safe_len(df_itens_manifestos_sequenciados_m7),
+            "total_remanescente_m6_2": _safe_len(df_remanescente_m6_2),
+            "total_paradas_m7": _safe_len(df_paradas_m7),
         },
-        "manifestos_m7": _serializar_dataframe_para_records(df_manifestos_m7_contrato),
-        "itens_manifestos_sequenciados_m7": _serializar_dataframe_para_records(df_itens_manifestos_sequenciados_m7_contrato),
-        "manifestos_sequenciamento_resumo_m7": _serializar_dataframe_para_records(df_manifestos_sequenciamento_resumo_m7_contrato),
-        "paradas_m7": _serializar_dataframe_para_records(df_paradas_m7_contrato),
+        "manifestos_m7": manifestos_m7,
+        "manifestos_fechados": manifestos_fechados,
+        "manifestos_compostos": manifestos_compostos,
+        "itens_manifestos_sequenciados_m7": itens_manifestos_sequenciados_m7,
+        "manifestos_sequenciamento_resumo_m7": manifestos_sequenciamento_resumo_m7,
+        "paradas_m7": paradas_m7,
+        "nao_roteirizados": saldo_final_roteirizacao,
         "remanescentes": {
-            "nao_roteirizaveis_m3": _serializar_dataframe_para_records(df_nao_roteirizaveis_m3_contrato),
-            "saldo_final_roteirizacao": _serializar_dataframe_para_records(df_remanescente_m6_2_contrato),
+            "nao_roteirizaveis_m3": nao_roteirizaveis_m3,
+            "saldo_final_roteirizacao": saldo_final_roteirizacao,
         },
+        "total_carteira": _safe_len(contexto.df_carteira_raw),
+        "total_roteirizado": _safe_len(df_itens_manifestos_sequenciados_m7),
+        "total_nao_roteirizado": _safe_len(df_remanescente_m6_2),
     }
 
     if retornar_auditoria_interna:
@@ -2986,9 +2932,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         )
 
     _print_log(
-        f"[CONTRATO SISTEMA1] manifestos_m7={_safe_len(df_manifestos_m7_contrato)} "
-        f"itens_m7={_safe_len(df_itens_manifestos_sequenciados_m7_contrato)} "
-        f"remanescentes_saldo={_safe_len(df_remanescente_m6_2_contrato)}",
+        f"[CONTRATO SISTEMA1] manifestos_m7={len(manifestos_m7)} "
+        f"itens_m7={len(itens_manifestos_sequenciados_m7)} "
+        f"remanescentes_saldo={len(saldo_final_roteirizacao)}",
         force=True,
     )
     _print_log("[PIPELINE] Execução concluída", force=True)
