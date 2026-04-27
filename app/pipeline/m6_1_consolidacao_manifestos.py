@@ -54,6 +54,10 @@ COLS_ITENS_MANIFESTOS_BASE_M6 = [
     "longitude_destinatario",
     "latitude",
     "longitude",
+    "angulo_origem_destino_graus",
+    "eixo_8_setores",
+    "corredor_30g",
+    "corredor_30g_idx",
 ]
 
 
@@ -415,6 +419,10 @@ def _padronizar_itens_manifestados(
         "longitude_destinatario",
         "latitude",
         "longitude",
+        "angulo_origem_destino_graus",
+        "eixo_8_setores",
+        "corredor_30g",
+        "corredor_30g_idx",
     ]
     df = _garantir_colunas(df, colunas_minimas)
 
@@ -455,6 +463,10 @@ def _padronizar_itens_manifestados(
             "longitude_destinatario": pd.to_numeric(df["longitude_destinatario"], errors="coerce"),
             "latitude": pd.to_numeric(df["latitude"], errors="coerce"),
             "longitude": pd.to_numeric(df["longitude"], errors="coerce"),
+            "angulo_origem_destino_graus": pd.to_numeric(df["angulo_origem_destino_graus"], errors="coerce"),
+            "eixo_8_setores": df["eixo_8_setores"],
+            "corredor_30g": df["corredor_30g"],
+            "corredor_30g_idx": pd.to_numeric(df["corredor_30g_idx"], errors="coerce"),
         }
     )
 
