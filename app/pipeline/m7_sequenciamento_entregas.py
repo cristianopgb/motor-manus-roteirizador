@@ -1616,6 +1616,37 @@ def executar_m7_sequenciamento_entregas(
                 else pd.DataFrame(columns=COLS_ITENS_SEQ_M7_MIN)
             ),
             "df_manifestos_sequenciamento_resumo_m7": pd.DataFrame(columns=COLS_RESUMO_SEQ_M7_MIN),
+            "df_paradas_m7": pd.DataFrame(
+                columns=[
+                    "manifesto_id",
+                    "ordem_entrega_parada_m7",
+                    "chave_parada_seq_m7",
+                    "destinatario_ref_m7",
+                    "cidade_ref_m7",
+                    "uf_ref_m7",
+                    "bucket_prioridade_m7",
+                    "folga_min_m7",
+                    "peso_total_m7",
+                    "distancia_origem_parada_km_m7",
+                    "lat_ref_m7",
+                    "lon_ref_m7",
+                ]
+            ),
+            "df_auditoria_m7": pd.DataFrame(
+                columns=[
+                    "manifesto_id",
+                    "status_sequenciamento_m7",
+                    "metodo_predominante_m7",
+                    "qtd_docs",
+                    "qtd_paradas",
+                    "qtd_cidades",
+                    "km_total_sequencia_cidades_m7",
+                    "km_total_sequencia_docs_intra_cidade_m7",
+                    "km_total_sequencia_paradas_m7",
+                    "trilha_sequenciamento_cidades_m7",
+                    "trilha_sequenciamento_docs_m7",
+                ]
+            ),
             "df_cidades_sequenciamento_resumo_m7": pd.DataFrame(),
             "df_tentativas_sequenciamento_m7": pd.DataFrame(columns=COLS_TENTATIVAS_SEQ_M7_MIN),
             "df_diagnostico_recuperacao_coordenadas_m7": pd.DataFrame(columns=COLS_DIAGNOSTICO_COORD_M7_MIN),
@@ -1696,6 +1727,7 @@ def executar_m7_sequenciamento_entregas(
     tentativas: List[Dict[str, Any]] = []
     auditorias_manifestos: List[Dict[str, Any]] = []
     cidades_resumo_manifestos: List[pd.DataFrame] = []
+    paradas_manifestos: List[pd.DataFrame] = []
 
     for manifesto_id, grupo in df_itens.groupby("manifesto_id", dropna=False):
         grupo = grupo.copy().reset_index(drop=True)
@@ -1734,6 +1766,7 @@ def executar_m7_sequenciamento_entregas(
             grupo_seq["motivo_status_sequenciamento_m7"] = "sequenciamento_realizado"
 
             resultados.append(grupo_seq)
+            paradas_manifestos.append(df_paradas_seq.assign(manifesto_id=manifesto_id))
 
             df_cidades_seq = df_cidades_seq.copy()
             df_cidades_seq["manifesto_id"] = manifesto_id
@@ -1886,9 +1919,11 @@ def executar_m7_sequenciamento_entregas(
     )
     df_manifestos_sequenciamento_resumo_m7 = pd.DataFrame(resumos_manifestos)
     df_tentativas_sequenciamento_m7 = pd.DataFrame(tentativas)
+    df_paradas_m7 = pd.concat(paradas_manifestos, ignore_index=True) if paradas_manifestos else pd.DataFrame()
     df_cidades_sequenciamento_resumo_m7 = (
         pd.concat(cidades_resumo_manifestos, ignore_index=True) if cidades_resumo_manifestos else pd.DataFrame()
     )
+    df_auditoria_m7 = pd.DataFrame(auditorias_manifestos)
 
     if not df_itens_manifestos_sequenciados_m7.empty:
         df_manifestos_m7 = df_manifestos.merge(
@@ -1956,10 +1991,88 @@ def executar_m7_sequenciamento_entregas(
         ),
     }
 
+    itens_in = df_itens.copy()
+    itens_out = df_itens_manifestos_sequenciados_m7.copy()
+    manifestos_in = set(df_manifestos["manifesto_id"].astype(str))
+    manifestos_out = set(df_manifestos_m7["manifesto_id"].astype(str))
+    if len(itens_in) != len(itens_out):
+        raise ValueError(f"[M7] validação falhou: total_itens_entrada={len(itens_in)} difere de total_itens_saida={len(itens_out)}.")
+    if len(manifestos_in) != len(manifestos_out):
+        raise ValueError(
+            f"[M7] validação falhou: qtd_manifestos_entrada={len(manifestos_in)} difere de qtd_manifestos_saida={len(manifestos_out)}."
+        )
+    if "id_linha_pipeline" not in itens_out.columns:
+        raise ValueError("[M7] validação falhou: coluna id_linha_pipeline ausente no output.")
+    ids_in = set(itens_in["id_linha_pipeline"].astype(str))
+    ids_out = set(itens_out["id_linha_pipeline"].astype(str))
+    ids_faltantes = sorted(list(ids_in - ids_out))
+    if ids_faltantes:
+        raise ValueError(f"[M7] validação falhou: id_linha_pipeline ausentes na saída: {ids_faltantes[:20]}.")
+    if itens_out["id_linha_pipeline"].astype(str).duplicated().any():
+        raise ValueError("[M7] validação falhou: id_linha_pipeline duplicado na saída.")
+    for col in ("ordem_entrega_doc_m7", "ordem_carregamento_doc_m7"):
+        if col not in itens_out.columns or itens_out[col].isna().any():
+            raise ValueError(f"[M7] validação falhou: coluna obrigatória {col} ausente ou com nulos.")
+    if (
+        ("ordem_parada_m7" not in itens_out.columns or itens_out["ordem_parada_m7"].isna().all())
+        and ("ordem_entrega_parada_m7" not in itens_out.columns or itens_out["ordem_entrega_parada_m7"].isna().all())
+    ):
+        raise ValueError("[M7] validação falhou: item sem ordem_parada_m7 e sem ordem_entrega_parada_m7.")
+
+    cols_paradas_min = [
+        "manifesto_id",
+        "ordem_entrega_parada_m7",
+        "chave_parada_seq_m7",
+        "destinatario_ref_m7",
+        "cidade_ref_m7",
+        "uf_ref_m7",
+        "bucket_prioridade_m7",
+        "folga_min_m7",
+        "peso_total_m7",
+        "distancia_origem_parada_km_m7",
+        "lat_ref_m7",
+        "lon_ref_m7",
+    ]
+    for col in cols_paradas_min:
+        if col not in df_paradas_m7.columns:
+            df_paradas_m7[col] = None
+    df_paradas_m7 = df_paradas_m7[cols_paradas_min].copy()
+
+    cols_auditoria_min = [
+        "manifesto_id",
+        "status_sequenciamento_m7",
+        "metodo_predominante_m7",
+        "qtd_docs",
+        "qtd_paradas",
+        "qtd_cidades",
+        "km_total_sequencia_cidades_m7",
+        "km_total_sequencia_docs_intra_cidade_m7",
+        "km_total_sequencia_paradas_m7",
+        "trilha_sequenciamento_cidades_m7",
+        "trilha_sequenciamento_docs_m7",
+    ]
+    if "status_sequenciamento_m7" not in df_auditoria_m7.columns:
+        df_auditoria_m7["status_sequenciamento_m7"] = "ok"
+    if "metodo_predominante_m7" not in df_auditoria_m7.columns:
+        df_auditoria_m7["metodo_predominante_m7"] = "varredura_extremos_por_cidade_mais_entregas_internas- nova versão"
+    if "qtd_docs" not in df_auditoria_m7.columns:
+        mapa_qtd_docs = df_itens_manifestos_sequenciados_m7.groupby("manifesto_id")["id_linha_pipeline"].count().to_dict()
+        df_auditoria_m7["qtd_docs"] = df_auditoria_m7["manifesto_id"].map(mapa_qtd_docs).fillna(0).astype(int)
+    if "qtd_paradas" not in df_auditoria_m7.columns:
+        df_auditoria_m7["qtd_paradas"] = df_manifestos_sequenciamento_resumo_m7.set_index("manifesto_id").reindex(df_auditoria_m7["manifesto_id"]).get("qtd_paradas_manifesto_m7", 0).values
+    if "qtd_cidades" not in df_auditoria_m7.columns:
+        df_auditoria_m7["qtd_cidades"] = df_manifestos_sequenciamento_resumo_m7.set_index("manifesto_id").reindex(df_auditoria_m7["manifesto_id"]).get("qtd_cidades_manifesto_m7", 0).values
+    for col in cols_auditoria_min:
+        if col not in df_auditoria_m7.columns:
+            df_auditoria_m7[col] = None
+    df_auditoria_m7 = df_auditoria_m7[cols_auditoria_min].copy()
+
     outputs = {
         "df_manifestos_m7": df_manifestos_m7.reset_index(drop=True),
         "df_itens_manifestos_sequenciados_m7": df_itens_manifestos_sequenciados_m7.reset_index(drop=True),
         "df_manifestos_sequenciamento_resumo_m7": df_manifestos_sequenciamento_resumo_m7.reset_index(drop=True),
+        "df_paradas_m7": df_paradas_m7.reset_index(drop=True),
+        "df_auditoria_m7": df_auditoria_m7.reset_index(drop=True),
         "df_cidades_sequenciamento_resumo_m7": df_cidades_sequenciamento_resumo_m7.reset_index(drop=True),
         "df_tentativas_sequenciamento_m7": df_tentativas_sequenciamento_m7.reset_index(drop=True),
         "df_diagnostico_recuperacao_coordenadas_m7": df_diagnostico_recuperacao_coordenadas_m7.reset_index(drop=True),

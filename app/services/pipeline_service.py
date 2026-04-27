@@ -20,8 +20,6 @@ from app.pipeline.m5_4b_composicao_mesorregioes import executar_m5_4b_composicao
 from app.pipeline.m6_1_consolidacao_manifestos import executar_m6_1_consolidacao_manifestos
 from app.pipeline.m6_2_complemento_ocupacao import COLS_MANIFESTOS_OBRIGATORIAS, executar_m6_2_complemento_ocupacao
 from app.pipeline.m7_sequenciamento_entregas import executar_m7_sequenciamento_entregas
-from app.pipeline.m7_1_reavaliacao_origem_km import executar_m7_1_reavaliacao_origem_km
-from app.pipeline.m7_2_adequacao_excesso_km import executar_m7_2_adequacao_excesso_km
 from app.schemas import RoteirizacaoRequest
 from app.services.auditoria_pipeline_service import persistir_snapshot_modulo_auditoria
 from app.services.payload_service import PipelineContext, normalizar_payload_para_pipeline
@@ -37,7 +35,7 @@ PIPELINE_FLAGS = {
     "executar_m5_4b": True,
     "executar_m6_1": True,
     "executar_m6_2": True,
-    "executar_m7": False,
+    "executar_m7": True,
 }
 
 
@@ -2580,147 +2578,26 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         auditoria_por_snapshot[snapshot_nome] = auditoria_por_snapshot.get(snapshot_nome, 0) + total_m7_snapshot
         print(f"[AUDITORIA FLAT] snapshot={snapshot_nome} linhas={total_m7_snapshot}")
 
-    # =========================================================================================
-    # M7.1
-    # =========================================================================================
-    t0 = _agora()
-    outputs_m7_1, meta_m7_1 = executar_m7_1_reavaliacao_origem_km(
-        df_manifestos_m7=df_manifestos_m7,
-        df_itens_sequenciados_m7=df_itens_manifestos_sequenciados_m7,
-        df_resumo_sequenciamento_m7=df_manifestos_sequenciamento_resumo_m7,
-        data_base_roteirizacao=contexto.data_base,
-        caminhos_pipeline=contexto.caminhos_pipeline,
-        filial_contexto=contexto.filial,
-    )
-    tempo_m7_1 = _duracao_ms(t0)
-    metricas_tempo["m7_1_reavaliacao_origem_km_ms"] = tempo_m7_1
-
-    df_manifestos_reavaliados_m7_1 = _copiar_ou_vazio(outputs_m7_1.get("df_manifestos_reavaliados_m7_1"))
-    df_itens_reavaliados_m7_1 = _copiar_ou_vazio(outputs_m7_1.get("df_itens_reavaliados_m7_1"))
-    df_manifestos_acima_km_m7_1 = _copiar_ou_vazio(outputs_m7_1.get("df_manifestos_acima_km_m7_1"))
-    df_tentativas_reavaliacao_m7_1 = _copiar_ou_vazio(outputs_m7_1.get("df_tentativas_reavaliacao_m7_1"))
-    resumo_m7_1 = meta_m7_1.get("resumo_m7_1", {}) if isinstance(meta_m7_1, dict) else {}
-
-    logs.append(
-        _log(
-            modulo="m7_1_reavaliacao_origem_km",
-            status="ok",
-            mensagem="M7.1 executado com sucesso",
-            quantidade_entrada=_safe_len(df_itens_manifestos_sequenciados_m7),
-            quantidade_saida=_safe_len(df_itens_reavaliados_m7_1),
-            tempo_ms=tempo_m7_1,
-            extra=resumo_m7_1,
-        )
-    )
-
-    snapshots_m7_1 = [
-        ("m7_1_manifestos_reavaliados", df_manifestos_reavaliados_m7_1),
-        ("m7_1_itens_reavaliados", df_itens_reavaliados_m7_1),
-        ("m7_1_manifestos_acima_km", df_manifestos_acima_km_m7_1),
-        ("m7_1_tentativas", df_tentativas_reavaliacao_m7_1),
-    ]
-    for snapshot_nome, df_snapshot in snapshots_m7_1:
-        total_snapshot = persistir_snapshot_modulo_auditoria(
-            teste_id=teste_id_auditoria,
-            rodada_id=contexto.rodada_id,
-            upload_id=contexto.upload_id,
-            modulo="m7_1_reavaliacao_origem_km",
-            ordem_modulo=12,
-            df_etapa=df_snapshot,
-            snapshot_nome=snapshot_nome,
-            contexto=contexto_auditoria,
-            rastreamento=auditoria_flat_rastreamento,
-        )
-        auditoria_por_modulo["m7_1_reavaliacao_origem_km"] = auditoria_por_modulo.get("m7_1_reavaliacao_origem_km", 0) + total_snapshot
-        auditoria_por_snapshot[snapshot_nome] = auditoria_por_snapshot.get(snapshot_nome, 0) + total_snapshot
-        print(f"[AUDITORIA FLAT] snapshot={snapshot_nome} linhas={total_snapshot}")
-
-    # =========================================================================================
-    # M7.2
-    # =========================================================================================
-    t0 = _agora()
-    try:
-        outputs_m7_2, meta_m7_2 = executar_m7_2_adequacao_excesso_km(
-            df_manifestos_reavaliados_m7_1=df_manifestos_reavaliados_m7_1,
-            df_itens_reavaliados_m7_1=df_itens_reavaliados_m7_1,
-            df_manifestos_acima_km_m7_1=df_manifestos_acima_km_m7_1,
-            data_base_roteirizacao=contexto.data_base,
-            caminhos_pipeline=contexto.caminhos_pipeline,
-            filial_contexto=contexto.filial,
-        )
-    except Exception as e:
-        print(f"[M7.2] erro estrutural capturado no pipeline_service: {e}")
-        outputs_m7_2 = {
-            "df_manifestos_ajustados_m7_2": pd.DataFrame(),
-            "df_itens_manifestos_finais_m7_2": pd.DataFrame(),
-            "df_itens_retirados_m7_2": pd.DataFrame(),
-            "df_manifestos_desfeitos_m7_2": pd.DataFrame(),
-            "df_excedente_final_m7_2": pd.DataFrame(),
-            "df_tentativas_adequacao_m7_2": pd.DataFrame(
-                [{"tipo_tentativa": "erro_estrutural_modulo", "motivo": str(e), "aceito": False}]
-            ),
-        }
-        meta_m7_2 = {
-            "resumo_m7_2": {"erro_estrutural_m7_2": str(e)},
-        }
-    tempo_m7_2 = _duracao_ms(t0)
-    metricas_tempo["m7_2_adequacao_excesso_km_ms"] = tempo_m7_2
-
-    if not isinstance(outputs_m7_2, dict):
-        outputs_m7_2 = {}
-
-    df_manifestos_ajustados_m7_2 = _copiar_ou_vazio(outputs_m7_2.get("df_manifestos_ajustados_m7_2"))
-    df_itens_manifestos_finais_m7_2 = _copiar_ou_vazio(outputs_m7_2.get("df_itens_manifestos_finais_m7_2"))
-    df_itens_retirados_m7_2 = _copiar_ou_vazio(outputs_m7_2.get("df_itens_retirados_m7_2"))
-    df_manifestos_desfeitos_m7_2 = _copiar_ou_vazio(outputs_m7_2.get("df_manifestos_desfeitos_m7_2"))
-    df_excedente_final_m7_2 = _copiar_ou_vazio(outputs_m7_2.get("df_excedente_final_m7_2"))
-    df_tentativas_adequacao_m7_2 = _copiar_ou_vazio(outputs_m7_2.get("df_tentativas_adequacao_m7_2"))
-    resumo_m7_2 = meta_m7_2.get("resumo_m7_2", {}) if isinstance(meta_m7_2, dict) else {}
-
-    logs.append(
-        _log(
-            modulo="m7_2_adequacao_excesso_km",
-            status="ok",
-            mensagem="M7.2 executado com sucesso",
-            quantidade_entrada=_safe_len(df_manifestos_acima_km_m7_1),
-            quantidade_saida=_safe_len(df_itens_manifestos_finais_m7_2),
-            tempo_ms=tempo_m7_2,
-            extra=resumo_m7_2,
-        )
-    )
-
-    snapshots_m7_2 = [
-        ("m7_2_manifestos_ajustados", df_manifestos_ajustados_m7_2),
-        ("m7_2_itens_finais", df_itens_manifestos_finais_m7_2),
-        ("m7_2_itens_retirados", df_itens_retirados_m7_2),
-        ("m7_2_manifestos_desfeitos", df_manifestos_desfeitos_m7_2),
-        ("m7_2_excedente_final", df_excedente_final_m7_2),
-        ("m7_2_tentativas", df_tentativas_adequacao_m7_2),
-    ]
-    for snapshot_nome, df_snapshot in snapshots_m7_2:
-        total_snapshot = persistir_snapshot_modulo_auditoria(
-            teste_id=teste_id_auditoria,
-            rodada_id=contexto.rodada_id,
-            upload_id=contexto.upload_id,
-            modulo="m7_2_adequacao_excesso_km",
-            ordem_modulo=13,
-            df_etapa=df_snapshot,
-            snapshot_nome=snapshot_nome,
-            contexto=contexto_auditoria,
-            rastreamento=auditoria_flat_rastreamento,
-        )
-        auditoria_por_modulo["m7_2_adequacao_excesso_km"] = auditoria_por_modulo.get("m7_2_adequacao_excesso_km", 0) + total_snapshot
-        auditoria_por_snapshot[snapshot_nome] = auditoria_por_snapshot.get(snapshot_nome, 0) + total_snapshot
-        print(f"[AUDITORIA FLAT] snapshot={snapshot_nome} linhas={total_snapshot}")
-
     tempo_total = _duracao_ms(inicio_total)
     metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
     print(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
 
+    manifestos_m7_serializados = _serializar_dataframe_para_records(df_manifestos_m7)
+    itens_manifestos_sequenciados_m7_serializados = _serializar_dataframe_para_records(df_itens_manifestos_sequenciados_m7)
+    manifestos_sequenciamento_resumo_m7_serializados = _serializar_dataframe_para_records(df_manifestos_sequenciamento_resumo_m7)
+    paradas_m7_serializados = _serializar_dataframe_para_records(df_paradas_m7)
+    auditoria_m7_serializados = _serializar_dataframe_para_records(df_auditoria_m7)
+    tentativas_sequenciamento_m7_serializados = _serializar_dataframe_para_records(df_tentativas_sequenciamento_m7)
+    diagnostico_recuperacao_coordenadas_m7_serializados = _serializar_dataframe_para_records(
+        df_diagnostico_recuperacao_coordenadas_m7
+    )
+    remanescentes_nao_roteirizaveis_m3_serializados = _serializar_dataframe_para_records(df_nao_roteirizaveis_m3)
+    remanescentes_saldo_final_roteirizacao_serializados = _serializar_dataframe_para_records(df_remanescente_m6_2)
+
     resposta: Dict[str, Any] = {
         "status": "ok",
-        "mensagem": "Execução encerrada propositalmente após o M7.2 para auditoria da etapa final.",
-        "pipeline_real_ate": "M7.2",
+        "mensagem": "Execução encerrada após o M7 para auditoria do sequenciamento de entregas.",
+        "pipeline_real_ate": "M7",
         "modo_resposta": "auditoria_m7_sequenciamento_entregas",
         "resposta_truncada": False,
         "teste_id_auditoria": teste_id_auditoria,
@@ -2748,16 +2625,6 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             "total_resumo_sequenciamento_m7": _safe_len(df_manifestos_sequenciamento_resumo_m7),
             "total_tentativas_m7": _safe_len(df_tentativas_sequenciamento_m7),
             "total_diagnostico_coordenadas_m7": _safe_len(df_diagnostico_recuperacao_coordenadas_m7),
-            "total_manifestos_reavaliados_m7_1": _safe_len(df_manifestos_reavaliados_m7_1),
-            "total_itens_reavaliados_m7_1": _safe_len(df_itens_reavaliados_m7_1),
-            "total_manifestos_acima_km_m7_1": _safe_len(df_manifestos_acima_km_m7_1),
-            "total_tentativas_reavaliacao_m7_1": _safe_len(df_tentativas_reavaliacao_m7_1),
-            "total_manifestos_ajustados_m7_2": _safe_len(df_manifestos_ajustados_m7_2),
-            "total_itens_finais_m7_2": _safe_len(df_itens_manifestos_finais_m7_2),
-            "total_itens_retirados_m7_2": _safe_len(df_itens_retirados_m7_2),
-            "total_manifestos_desfeitos_m7_2": _safe_len(df_manifestos_desfeitos_m7_2),
-            "total_excedente_final_m7_2": _safe_len(df_excedente_final_m7_2),
-            "total_tentativas_adequacao_m7_2": _safe_len(df_tentativas_adequacao_m7_2),
         },
         "resumo_m4": resumo_m4,
         "resumo_m5_1": resumo_m5_1,
@@ -2778,15 +2645,44 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             "total_tentativas_m7": _safe_len(df_tentativas_sequenciamento_m7),
             "total_diagnostico_coordenadas_m7": _safe_len(df_diagnostico_recuperacao_coordenadas_m7),
         },
-        "resumo_m7_1": resumo_m7_1,
-        "resumo_m7_2": resumo_m7_2,
         "auditoria_modular": {
             "teste_id_auditoria": teste_id_auditoria,
             "modulos": [{"modulo": modulo, "linhas_gravadas": linhas} for modulo, linhas in auditoria_por_modulo.items()],
             "snapshots": [{"snapshot_nome": snapshot_nome, "linhas_gravadas": linhas} for snapshot_nome, linhas in auditoria_por_snapshot.items()],
             "colunas_persistidas": sorted(list(auditoria_flat_rastreamento.get("colunas_persistidas", set()))),
         },
-        "auditoria_m7": auditoria_m7,
+        "auditoria_m7": auditoria_m7_serializados,
+        "auditoria_m7_meta": auditoria_m7,
+        "manifestos_m7": manifestos_m7_serializados,
+        "itens_manifestos_sequenciados_m7": itens_manifestos_sequenciados_m7_serializados,
+        "manifestos_sequenciamento_resumo_m7": manifestos_sequenciamento_resumo_m7_serializados,
+        "paradas_m7": paradas_m7_serializados,
+        "tentativas_sequenciamento_m7": tentativas_sequenciamento_m7_serializados,
+        "diagnostico_recuperacao_coordenadas_m7": diagnostico_recuperacao_coordenadas_m7_serializados,
+        "remanescentes": {
+            "nao_roteirizaveis_m3": remanescentes_nao_roteirizaveis_m3_serializados,
+            "saldo_final_roteirizacao": remanescentes_saldo_final_roteirizacao_serializados,
+        },
+        "auditoria_serializacao": {
+            "manifestos_m7_total": _safe_len(df_manifestos_m7),
+            "manifestos_m7_retornado": len(manifestos_m7_serializados),
+            "itens_manifestos_sequenciados_m7_total": _safe_len(df_itens_manifestos_sequenciados_m7),
+            "itens_manifestos_sequenciados_m7_retornado": len(itens_manifestos_sequenciados_m7_serializados),
+            "manifestos_sequenciamento_resumo_m7_total": _safe_len(df_manifestos_sequenciamento_resumo_m7),
+            "manifestos_sequenciamento_resumo_m7_retornado": len(manifestos_sequenciamento_resumo_m7_serializados),
+            "paradas_m7_total": _safe_len(df_paradas_m7),
+            "paradas_m7_retornado": len(paradas_m7_serializados),
+            "auditoria_m7_total": _safe_len(df_auditoria_m7),
+            "auditoria_m7_retornado": len(auditoria_m7_serializados),
+            "tentativas_sequenciamento_m7_total": _safe_len(df_tentativas_sequenciamento_m7),
+            "tentativas_sequenciamento_m7_retornado": len(tentativas_sequenciamento_m7_serializados),
+            "diagnostico_recuperacao_coordenadas_m7_total": _safe_len(df_diagnostico_recuperacao_coordenadas_m7),
+            "diagnostico_recuperacao_coordenadas_m7_retornado": len(diagnostico_recuperacao_coordenadas_m7_serializados),
+            "remanescentes_nao_roteirizaveis_m3_total": _safe_len(df_nao_roteirizaveis_m3),
+            "remanescentes_nao_roteirizaveis_m3_retornado": len(remanescentes_nao_roteirizaveis_m3_serializados),
+            "remanescentes_saldo_final_roteirizacao_total": _safe_len(df_remanescente_m6_2),
+            "remanescentes_saldo_final_roteirizacao_retornado": len(remanescentes_saldo_final_roteirizacao_serializados),
+        },
         "logs": logs,
     }
 
@@ -2856,6 +2752,8 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             "manifestos_m7": [],
             "itens_manifestos_sequenciados_m7": [],
             "manifestos_sequenciamento_resumo_m7": [],
+            "paradas_m7": [],
+            "auditoria_m7": [],
             "tentativas_sequenciamento_m7": [],
             "diagnostico_recuperacao_coordenadas_m7": [],
             "remanescentes": {
@@ -2869,6 +2767,10 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
                 "itens_manifestos_sequenciados_m7_retornado": 0,
                 "manifestos_sequenciamento_resumo_m7_total": 0,
                 "manifestos_sequenciamento_resumo_m7_retornado": 0,
+                "paradas_m7_total": 0,
+                "paradas_m7_retornado": 0,
+                "auditoria_m7_total": 0,
+                "auditoria_m7_retornado": 0,
                 "tentativas_sequenciamento_m7_total": 0,
                 "tentativas_sequenciamento_m7_retornado": 0,
                 "diagnostico_recuperacao_coordenadas_m7_total": 0,
@@ -2878,7 +2780,7 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
                 "remanescentes_saldo_final_roteirizacao_total": 0,
                 "remanescentes_saldo_final_roteirizacao_retornado": 0,
             },
-            "auditoria_m7": {},
+            "auditoria_m7_meta": {},
             "erro_tecnico": erro_tecnico,
             "logs": logs,
         }
