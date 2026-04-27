@@ -223,6 +223,22 @@ def _selecionar_colunas_reais_existentes(
     return df[existentes].copy()
 
 
+def _extrair_dataframe_m3(outputs_m3: Dict[str, Any], chaves_candidatas: list[str]) -> pd.DataFrame:
+    for chave in chaves_candidatas:
+        df = outputs_m3.get(chave)
+        if isinstance(df, pd.DataFrame):
+            return df.copy()
+    return pd.DataFrame()
+
+
+def _filtrar_por_status_triagem(df: pd.DataFrame, status: str) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame()
+    if "status_triagem" not in df.columns:
+        return pd.DataFrame()
+    return df.loc[df["status_triagem"] == status].copy()
+
+
 def _normalizar_perfil_comparacao(valor: Any) -> str:
     texto = "" if valor is None else str(valor).strip().upper()
     if not texto:
@@ -644,10 +660,37 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
 
     outputs_m3 = meta_m3["outputs_m3"]
     resumo_m3 = meta_m3["resumo_m3"]
+    output_keys_m3 = sorted(list(outputs_m3.keys()))
+    _print_log(f"[M3] outputs disponíveis: {output_keys_m3}", force=True)
 
     df_carteira_roteirizavel = outputs_m3["df_carteira_roteirizavel"]
     df_carteira_agendamento_futuro = outputs_m3["df_carteira_agendamento_futuro"]
     df_carteira_agendas_vencidas = outputs_m3["df_carteira_agendas_vencidas"]
+    df_agendamento_futuro_m3 = _extrair_dataframe_m3(
+        outputs_m3, ["df_agendamento_futuro", "df_carteira_agendamento_futuro"]
+    )
+    df_aguardando_agendamento_m3 = _extrair_dataframe_m3(
+        outputs_m3, ["df_aguardando_agendamento", "df_carteira_aguardando_agendamento"]
+    )
+    df_excecoes_triagem_m3 = _extrair_dataframe_m3(
+        outputs_m3, ["df_excecoes_triagem", "df_carteira_excecoes_triagem"]
+    )
+    if df_excecoes_triagem_m3.empty:
+        df_excecoes_triagem_m3 = _filtrar_por_status_triagem(df_carteira_triagem, "excecao_triagem")
+    df_agenda_vencida_m3 = _extrair_dataframe_m3(
+        outputs_m3, ["df_agenda_vencida", "df_agendas_vencidas", "df_carteira_agendas_vencidas"]
+    )
+    if df_agenda_vencida_m3.empty:
+        df_agenda_vencida_m3 = _filtrar_por_status_triagem(df_carteira_triagem, "agenda_vencida")
+    df_nao_roteirizaveis_m3 = _extrair_dataframe_m3(outputs_m3, ["df_nao_roteirizaveis_m3"])
+    if df_nao_roteirizaveis_m3.empty:
+        df_nao_roteirizaveis_m3 = _consolidar_remanescente_global(
+            _consolidar_remanescente_global(
+                _consolidar_remanescente_global(df_agendamento_futuro_m3, df_aguardando_agendamento_m3),
+                df_excecoes_triagem_m3,
+            ),
+            df_agenda_vencida_m3,
+        )
 
     logs.append(
         _log(
@@ -2836,11 +2879,11 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     paradas_m7 = _serializar_dataframe_para_records(df_paradas_m7, limit=None)
     saldo_final_roteirizacao = _serializar_dataframe_para_records(df_remanescente_m6_2, limit=None)
 
-    df_nao_roteirizaveis_m3_real = locals().get("df_nao_roteirizaveis_m3")
-    if isinstance(df_nao_roteirizaveis_m3_real, pd.DataFrame):
-        nao_roteirizaveis_m3 = _serializar_dataframe_para_records(df_nao_roteirizaveis_m3_real, limit=None)
-    else:
-        nao_roteirizaveis_m3 = []
+    nao_roteirizaveis_m3 = _serializar_dataframe_para_records(df_nao_roteirizaveis_m3, limit=None)
+    agendamento_futuro = _serializar_dataframe_para_records(df_agendamento_futuro_m3, limit=None)
+    aguardando_agendamento = _serializar_dataframe_para_records(df_aguardando_agendamento_m3, limit=None)
+    excecoes_triagem = _serializar_dataframe_para_records(df_excecoes_triagem_m3, limit=None)
+    agenda_vencida = _serializar_dataframe_para_records(df_agenda_vencida_m3, limit=None)
 
     manifestos_fechados: List[Dict[str, Any]] = []
     manifestos_compostos: List[Dict[str, Any]] = []
@@ -2860,6 +2903,17 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     print("[RESPONSE] total paradas_m7 serializadas:", len(paradas_m7))
     print("[RESPONSE] total remanescentes saldo_final_roteirizacao:", len(saldo_final_roteirizacao))
+    print(
+        "[CONTRATO TRIAGEM]",
+        {
+            "saldo_final_roteirizacao": len(saldo_final_roteirizacao),
+            "nao_roteirizaveis_m3": len(nao_roteirizaveis_m3),
+            "agendamento_futuro": len(agendamento_futuro),
+            "aguardando_agendamento": len(aguardando_agendamento),
+            "excecoes_triagem": len(excecoes_triagem),
+            "agenda_vencida": len(agenda_vencida),
+        },
+    )
 
     resposta: Dict[str, Any] = {
         "status": "ok",
@@ -2883,6 +2937,15 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             "total_itens_manifestos_sequenciados_m7": _safe_len(df_itens_manifestos_sequenciados_m7),
             "total_remanescente_m6_2": _safe_len(df_remanescente_m6_2),
             "total_paradas_m7": _safe_len(df_paradas_m7),
+            "triagem": {
+                "total_carteira": _safe_len(contexto.df_carteira_raw),
+                "total_roteirizavel_m3": _safe_len(df_carteira_roteirizavel),
+                "agendamento_futuro": _safe_len(df_agendamento_futuro_m3),
+                "aguardando_agendamento": _safe_len(df_aguardando_agendamento_m3),
+                "excecoes_triagem": _safe_len(df_excecoes_triagem_m3),
+                "nao_roteirizaveis_m3": _safe_len(df_nao_roteirizaveis_m3),
+                "saldo_final_roteirizacao": _safe_len(df_remanescente_m6_2),
+            },
         },
         "manifestos_m7": manifestos_m7,
         "manifestos_fechados": manifestos_fechados,
@@ -2891,9 +2954,17 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         "manifestos_sequenciamento_resumo_m7": manifestos_sequenciamento_resumo_m7,
         "paradas_m7": paradas_m7,
         "nao_roteirizados": saldo_final_roteirizacao,
+        "cargas_agendamento_futuro": agendamento_futuro,
+        "cargas_agenda_vencida": agenda_vencida,
+        "cargas_excecao_triagem": excecoes_triagem,
+        "cargas_nao_alocadas": nao_roteirizaveis_m3,
         "remanescentes": {
             "nao_roteirizaveis_m3": nao_roteirizaveis_m3,
             "saldo_final_roteirizacao": saldo_final_roteirizacao,
+            "agendamento_futuro": agendamento_futuro,
+            "aguardando_agendamento": aguardando_agendamento,
+            "excecoes_triagem": excecoes_triagem,
+            "agenda_vencida": agenda_vencida,
         },
         "total_carteira": _safe_len(contexto.df_carteira_raw),
         "total_roteirizado": _safe_len(df_itens_manifestos_sequenciados_m7),
@@ -2982,9 +3053,18 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             "auditoria_m7": [],
             "tentativas_sequenciamento_m7": [],
             "diagnostico_recuperacao_coordenadas_m7": [],
+            "nao_roteirizados": [],
+            "cargas_agendamento_futuro": [],
+            "cargas_agenda_vencida": [],
+            "cargas_excecao_triagem": [],
+            "cargas_nao_alocadas": [],
             "remanescentes": {
                 "nao_roteirizaveis_m3": [],
                 "saldo_final_roteirizacao": [],
+                "agendamento_futuro": [],
+                "aguardando_agendamento": [],
+                "excecoes_triagem": [],
+                "agenda_vencida": [],
             },
             "auditoria_serializacao": {
                 "manifestos_m7_total": 0,
