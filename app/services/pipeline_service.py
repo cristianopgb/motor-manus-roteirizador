@@ -37,6 +37,11 @@ PIPELINE_FLAGS = {
     "executar_m6_1": True,
     "executar_m6_2": True,
     "executar_m7": True,
+    "executar_validadores_exaustao": True,
+    "executar_m4_repescagem": True,
+    "executar_m5_2_repescagem": True,
+    "executar_m5_3_repescagem": True,
+    "executar_m5_4_repescagem": True,
 }
 
 
@@ -170,6 +175,225 @@ def _consolidar_remanescente_global(df_a: Any, df_b: Any) -> pd.DataFrame:
             return df_consolidado.drop_duplicates(subset=[coluna_chave], keep="first", ignore_index=True)
 
     return df_consolidado
+
+
+def _primeira_coluna_existente(df: pd.DataFrame, candidatos: list[str]) -> str | None:
+    for c in candidatos:
+        if isinstance(df, pd.DataFrame) and c in df.columns:
+            return c
+    return None
+
+
+def _coluna_peso_operacional(df: pd.DataFrame) -> str | None:
+    return _primeira_coluna_existente(
+        df,
+        [
+            "peso_calculado",
+            "peso_final_m6_2",
+            "peso_kg",
+            "Peso Calculo",
+            "Peso C",
+            "Peso",
+        ],
+    )
+
+
+def _menor_ocupacao_minima_kg(df_veiculos_tratados: pd.DataFrame) -> float:
+    if not isinstance(df_veiculos_tratados, pd.DataFrame) or df_veiculos_tratados.empty:
+        return 0.0
+
+    col_cap = _primeira_coluna_existente(
+        df_veiculos_tratados,
+        [
+            "capacidade_peso_kg",
+            "capacidade_kg",
+            "capacidade_peso",
+        ],
+    )
+
+    col_ocup = _primeira_coluna_existente(
+        df_veiculos_tratados,
+        [
+            "ocupacao_minima_perc",
+            "ocupacao_minima",
+        ],
+    )
+
+    if not col_cap:
+        return 0.0
+
+    caps = pd.to_numeric(df_veiculos_tratados[col_cap], errors="coerce")
+    caps = caps[caps > 0]
+
+    if caps.empty:
+        return 0.0
+
+    menor_capacidade = float(caps.min())
+
+    ocupacao = 70.0
+    if col_ocup:
+        ocupacoes = pd.to_numeric(df_veiculos_tratados[col_ocup], errors="coerce")
+        ocupacoes = ocupacoes[ocupacoes > 0]
+        if not ocupacoes.empty:
+            ocupacao = float(ocupacoes.min())
+
+    if ocupacao > 1:
+        ocupacao = ocupacao / 100.0
+
+    return menor_capacidade * ocupacao
+
+
+def _filtrar_remanescentes_com_potencial(
+    df_remanescente: pd.DataFrame,
+    chaves_grupo: list[str],
+    df_veiculos_tratados: pd.DataFrame,
+    nome_etapa: str,
+    limite_grupos: int = 20,
+) -> tuple[pd.DataFrame, dict]:
+    if not isinstance(df_remanescente, pd.DataFrame) or df_remanescente.empty:
+        return pd.DataFrame(), {
+            "ativado": False,
+            "motivo": "sem_remanescente",
+            "grupos_com_potencial": 0,
+            "linhas_enviadas_repescagem": 0,
+        }
+
+    peso_col = _coluna_peso_operacional(df_remanescente)
+    if not peso_col:
+        return pd.DataFrame(), {
+            "ativado": False,
+            "motivo": "sem_coluna_peso",
+            "grupos_com_potencial": 0,
+            "linhas_enviadas_repescagem": 0,
+        }
+
+    chaves_existentes = [c for c in chaves_grupo if c in df_remanescente.columns]
+    if not chaves_existentes:
+        return pd.DataFrame(), {
+            "ativado": False,
+            "motivo": "sem_chaves_grupo",
+            "grupos_com_potencial": 0,
+            "linhas_enviadas_repescagem": 0,
+        }
+
+    gatilho_kg = _menor_ocupacao_minima_kg(df_veiculos_tratados)
+    if gatilho_kg <= 0:
+        return pd.DataFrame(), {
+            "ativado": False,
+            "motivo": "sem_gatilho_veiculo",
+            "grupos_com_potencial": 0,
+            "linhas_enviadas_repescagem": 0,
+        }
+
+    base = df_remanescente.copy()
+    base["_peso_validador"] = pd.to_numeric(base[peso_col], errors="coerce").fillna(0)
+
+    resumo = (
+        base.groupby(chaves_existentes, dropna=False)["_peso_validador"]
+        .sum()
+        .reset_index()
+        .rename(columns={"_peso_validador": "_peso_total_grupo"})
+    )
+
+    resumo = resumo[resumo["_peso_total_grupo"] >= gatilho_kg]
+    resumo = resumo.sort_values("_peso_total_grupo", ascending=False).head(limite_grupos)
+
+    if resumo.empty:
+        return pd.DataFrame(), {
+            "ativado": False,
+            "motivo": "sem_grupo_com_peso_minimo",
+            "gatilho_kg": gatilho_kg,
+            "grupos_com_potencial": 0,
+            "linhas_enviadas_repescagem": 0,
+        }
+
+    df_filtrado = base.merge(
+        resumo[chaves_existentes],
+        on=chaves_existentes,
+        how="inner",
+    ).drop(columns=["_peso_validador"], errors="ignore")
+
+    meta = {
+        "ativado": True,
+        "motivo": "grupos_com_potencial",
+        "nome_etapa": nome_etapa,
+        "gatilho_kg": gatilho_kg,
+        "chaves_grupo": chaves_existentes,
+        "grupos_com_potencial": int(len(resumo)),
+        "linhas_enviadas_repescagem": int(len(df_filtrado)),
+        "peso_total_enviado_repescagem": float(pd.to_numeric(df_filtrado[peso_col], errors="coerce").fillna(0).sum()),
+    }
+
+    print(f"[VALIDADOR EXAUSTAO] {nome_etapa}", meta)
+
+    return df_filtrado, meta
+
+
+def _remover_itens_alocados_do_remanescente(
+    df_remanescente_original: pd.DataFrame,
+    df_itens_alocados: pd.DataFrame,
+) -> pd.DataFrame:
+    if not isinstance(df_remanescente_original, pd.DataFrame) or df_remanescente_original.empty:
+        return pd.DataFrame()
+    if not isinstance(df_itens_alocados, pd.DataFrame) or df_itens_alocados.empty:
+        return df_remanescente_original.copy()
+
+    chave = _primeira_coluna_existente(
+        df_remanescente_original,
+        ["id_linha_pipeline", "chave_linha_dataset", "nro_documento", "Nro Doc."],
+    )
+
+    if not chave or chave not in df_itens_alocados.columns:
+        return df_remanescente_original.copy()
+
+    alocados = set(df_itens_alocados[chave].dropna().astype(str))
+    out = df_remanescente_original.copy()
+    return out[~out[chave].astype(str).isin(alocados)].copy()
+
+
+def _renomear_manifestos_repescagem(
+    df_manifestos: pd.DataFrame,
+    df_itens: pd.DataFrame,
+    prefixo: str,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    manifestos = _copiar_ou_vazio(df_manifestos)
+    itens = _copiar_ou_vazio(df_itens)
+
+    if manifestos.empty or "manifesto_id" not in manifestos.columns:
+        return manifestos, itens
+
+    ids_ordenados = (
+        manifestos["manifesto_id"]
+        .dropna()
+        .astype(str)
+        .drop_duplicates()
+        .tolist()
+    )
+    if not ids_ordenados:
+        return manifestos, itens
+
+    mapa_ids = {mid: f"{prefixo}{idx:04d}" for idx, mid in enumerate(ids_ordenados, start=1)}
+
+    manifestos["manifesto_id"] = manifestos["manifesto_id"].astype(str).map(mapa_ids).fillna(manifestos["manifesto_id"])
+    if isinstance(itens, pd.DataFrame) and not itens.empty and "manifesto_id" in itens.columns:
+        itens["manifesto_id"] = itens["manifesto_id"].astype(str).map(mapa_ids).fillna(itens["manifesto_id"])
+
+    origem_por_prefixo = {
+        "MF41_": "M4.1",
+        "PM521_": "M5.2.1",
+        "PM531_": "M5.3.1",
+        "PM541_": "M5.4.1",
+    }
+    origem = origem_por_prefixo.get(prefixo)
+    if origem:
+        for df_alvo in (manifestos, itens):
+            if not isinstance(df_alvo, pd.DataFrame) or df_alvo.empty:
+                continue
+            for col in ("origem_modulo", "origem_manifesto_modulo"):
+                if col in df_alvo.columns:
+                    df_alvo[col] = origem
+
+    return manifestos, itens
 
 
 def _persistir_snapshot_se_ativo(
@@ -454,6 +678,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     auditoria_por_modulo: Dict[str, int] = {}
     auditoria_por_snapshot: Dict[str, int] = {}
     auditoria_flat_rastreamento: Dict[str, Any] = {"colunas_persistidas": set()}
+    auditoria_reprocessamento_etapas: Dict[str, Any] = {}
     def _print_log(*args: Any, force: bool = False) -> None:
         if force or log_verbose:
             print(*args)
@@ -470,6 +695,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     _print_log("[PIPELINE FLAGS] executar_m6_1=", PIPELINE_FLAGS["executar_m6_1"])
     _print_log("[PIPELINE FLAGS] executar_m6_2=", PIPELINE_FLAGS["executar_m6_2"])
     _print_log("[PIPELINE FLAGS] executar_m7=", PIPELINE_FLAGS["executar_m7"])
+    _print_log("[PIPELINE FLAGS] executar_validadores_exaustao=", PIPELINE_FLAGS.get("executar_validadores_exaustao"))
 
     # =========================================================================================
     # PAYLOAD -> CONTEXTO
@@ -852,6 +1078,69 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     _print_log(f"[M4] df_itens_m4 linhas={_safe_len(df_itens_m4)}")
     _print_log(f"[M4] df_remanescente_m4 linhas={_safe_len(df_remanescente_m4)}")
 
+    if PIPELINE_FLAGS.get("executar_validadores_exaustao") and PIPELINE_FLAGS.get("executar_m4_repescagem"):
+        df_m4_repescagem_input, meta_m4_1 = _filtrar_remanescentes_com_potencial(
+            df_remanescente_m4,
+            chaves_grupo=[
+                "tomador",
+                "Tomador",
+                "destinatario",
+                "Destinatário",
+                "cliente",
+            ],
+            df_veiculos_tratados=df_veiculos_tratados,
+            nome_etapa="M4.1",
+        )
+        if isinstance(df_m4_repescagem_input, pd.DataFrame) and not df_m4_repescagem_input.empty:
+            outputs_m4_1, _ = executar_m4_manifestos_fechados(
+                df_input_oficial_bloco_4=df_m4_repescagem_input,
+                df_veiculos_tratados=df_veiculos_tratados,
+                rodada_id=contexto.rodada_id,
+                data_base_roteirizacao=contexto.data_base,
+                tipo_roteirizacao=contexto.tipo_roteirizacao,
+                configuracao_frota=payload.configuracao_frota,
+                caminhos_pipeline=contexto.caminhos_pipeline,
+            )
+            df_manifestos_m4_1 = _copiar_ou_vazio(outputs_m4_1.get("df_manifestos_m4"))
+            if df_manifestos_m4_1.empty:
+                df_manifestos_m4_1 = _copiar_ou_vazio(outputs_m4_1.get("df_manifestos_fechados_bloco_4"))
+            df_itens_m4_1 = _copiar_ou_vazio(outputs_m4_1.get("df_itens_m4"))
+            if df_itens_m4_1.empty:
+                df_itens_m4_1 = _copiar_ou_vazio(outputs_m4_1.get("df_itens_manifestos_fechados_bloco_4"))
+            if df_itens_m4_1.empty:
+                df_itens_m4_1 = _copiar_ou_vazio(outputs_m4_1.get("df_itens_manifestados_bloco_4"))
+            df_manifestos_m4_1, df_itens_m4_1 = _renomear_manifestos_repescagem(
+                df_manifestos_m4_1,
+                df_itens_m4_1,
+                prefixo="MF41_",
+            )
+            df_manifestos_m4 = pd.concat([_copiar_ou_vazio(df_manifestos_m4), df_manifestos_m4_1], ignore_index=True, sort=False)
+            df_itens_m4 = pd.concat([_copiar_ou_vazio(df_itens_m4), df_itens_m4_1], ignore_index=True, sort=False)
+            df_itens_manifestados_m4 = df_itens_m4
+            df_remanescente_m4 = _remover_itens_alocados_do_remanescente(df_remanescente_m4, df_itens_m4_1)
+            df_remanescente_roteirizavel_bloco_4 = df_remanescente_m4
+            auditoria_reprocessamento_etapas["m4_1"] = {
+                **meta_m4_1,
+                "manifestos_adicionais": _safe_len(df_manifestos_m4_1),
+                "itens_recuperados": _safe_len(df_itens_m4_1),
+                "remanescente_apos": _safe_len(df_remanescente_m4),
+            }
+        else:
+            auditoria_reprocessamento_etapas["m4_1"] = {
+                **meta_m4_1,
+                "manifestos_adicionais": 0,
+                "itens_recuperados": 0,
+                "remanescente_apos": _safe_len(df_remanescente_m4),
+            }
+    else:
+        auditoria_reprocessamento_etapas["m4_1"] = {
+            "ativado": False,
+            "motivo": "desligado_por_flag",
+            "manifestos_adicionais": 0,
+            "itens_recuperados": 0,
+            "remanescente_apos": _safe_len(df_remanescente_m4),
+        }
+
     logs.append(
         _log(
             modulo="m4_manifestos_fechados",
@@ -1214,6 +1503,71 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     _print_log(f"[M5.2] df_itens_premanifestos_m5_2 linhas={_safe_len(df_itens_premanifestos_m5_2)}", force=not log_verbose)
     _print_log(f"[M5.2] df_remanescente_m5_2 linhas={_safe_len(df_remanescente_m5_2)}")
     _print_log(f"[M5.2] df_tentativas_m5_2 linhas={_safe_len(df_tentativas_m5_2)}")
+
+    if PIPELINE_FLAGS.get("executar_validadores_exaustao") and PIPELINE_FLAGS.get("executar_m5_2_repescagem"):
+        chaves_m5_2 = ["cidade", "Cida", "Cidade Dest.", "cidade_dest", "uf", "UF"]
+        col_cidade_m5_2 = _primeira_coluna_existente(df_remanescente_m5_2, ["cidade", "Cida", "Cidade Dest.", "cidade_dest"])
+        col_uf_m5_2 = _primeira_coluna_existente(df_remanescente_m5_2, ["uf", "UF"])
+        if col_cidade_m5_2 and col_uf_m5_2:
+            chaves_m5_2 = [col_cidade_m5_2, col_uf_m5_2]
+        df_m5_2_repescagem_input, meta_m5_2_1 = _filtrar_remanescentes_com_potencial(
+            df_remanescente_m5_2,
+            chaves_grupo=chaves_m5_2,
+            df_veiculos_tratados=df_veiculos_tratados,
+            nome_etapa="M5.2.1",
+        )
+        if isinstance(df_m5_2_repescagem_input, pd.DataFrame) and not df_m5_2_repescagem_input.empty:
+            df_perfis_m5_2_repescagem = _copiar_ou_vazio(df_perfis_elegiveis_por_cidade_m5_1)
+            col_cidade_input = _primeira_coluna_existente(df_m5_2_repescagem_input, ["cidade", "Cida", "Cidade Dest.", "cidade_dest"])
+            col_cidade_perfil = _primeira_coluna_existente(df_perfis_m5_2_repescagem, ["cidade", "Cida", "Cidade Dest.", "cidade_dest"])
+            if col_cidade_input and col_cidade_perfil and not df_perfis_m5_2_repescagem.empty:
+                cidades_alvo = set(df_m5_2_repescagem_input[col_cidade_input].dropna().astype(str))
+                df_perfis_m5_2_repescagem = df_perfis_m5_2_repescagem[
+                    df_perfis_m5_2_repescagem[col_cidade_perfil].astype(str).isin(cidades_alvo)
+                ].copy()
+            outputs_m5_2_1, _ = executar_m5_2_composicao_cidades(
+                df_saldo_elegivel_composicao_m5_1=df_m5_2_repescagem_input,
+                df_perfis_elegiveis_por_cidade_m5_1=df_perfis_m5_2_repescagem,
+                rodada_id=contexto.rodada_id,
+                data_base_roteirizacao=contexto.data_base,
+                tipo_roteirizacao=contexto.tipo_roteirizacao,
+                caminhos_pipeline=contexto.caminhos_pipeline,
+            )
+            df_premanifestos_m5_2_1 = _copiar_ou_vazio(outputs_m5_2_1.get("df_premanifestos_m5_2"))
+            df_itens_premanifestos_m5_2_1 = _copiar_ou_vazio(outputs_m5_2_1.get("df_itens_premanifestos_m5_2"))
+            df_premanifestos_m5_2_1, df_itens_premanifestos_m5_2_1 = _renomear_manifestos_repescagem(
+                df_premanifestos_m5_2_1,
+                df_itens_premanifestos_m5_2_1,
+                prefixo="PM521_",
+            )
+            df_premanifestos_m5_2 = pd.concat([_copiar_ou_vazio(df_premanifestos_m5_2), df_premanifestos_m5_2_1], ignore_index=True, sort=False)
+            df_itens_premanifestos_m5_2 = pd.concat(
+                [_copiar_ou_vazio(df_itens_premanifestos_m5_2), df_itens_premanifestos_m5_2_1],
+                ignore_index=True,
+                sort=False,
+            )
+            df_remanescente_m5_2 = _remover_itens_alocados_do_remanescente(df_remanescente_m5_2, df_itens_premanifestos_m5_2_1)
+            auditoria_reprocessamento_etapas["m5_2_1"] = {
+                **meta_m5_2_1,
+                "manifestos_adicionais": _safe_len(df_premanifestos_m5_2_1),
+                "itens_recuperados": _safe_len(df_itens_premanifestos_m5_2_1),
+                "remanescente_apos": _safe_len(df_remanescente_m5_2),
+            }
+        else:
+            auditoria_reprocessamento_etapas["m5_2_1"] = {
+                **meta_m5_2_1,
+                "manifestos_adicionais": 0,
+                "itens_recuperados": 0,
+                "remanescente_apos": _safe_len(df_remanescente_m5_2),
+            }
+    else:
+        auditoria_reprocessamento_etapas["m5_2_1"] = {
+            "ativado": False,
+            "motivo": "desligado_por_flag",
+            "manifestos_adicionais": 0,
+            "itens_recuperados": 0,
+            "remanescente_apos": _safe_len(df_remanescente_m5_2),
+        }
 
     logs.append(
         _log(
@@ -1613,6 +1967,89 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     _print_log(f"[M5.3] df_manifestos_m5_3 linhas={_safe_len(df_manifestos_m5_3)}")
     _print_log(f"[M5.3] df_itens_manifestos_m5_3 linhas={_safe_len(df_itens_manifestos_m5_3)}")
     _print_log(f"[M5.3] df_remanescente_m5_3 linhas={_safe_len(df_remanescente_m5_3)}")
+
+    if PIPELINE_FLAGS.get("executar_validadores_exaustao") and PIPELINE_FLAGS.get("executar_m5_3_repescagem"):
+        df_m5_3_repescagem_input, meta_m5_3_1 = _filtrar_remanescentes_com_potencial(
+            df_remanescente_m5_3,
+            chaves_grupo=[
+                "subregiao",
+                "sub_regiao",
+                "Sub-Região",
+                "mesorregiao",
+                "Mesoregião",
+                "uf",
+                "UF",
+            ],
+            df_veiculos_tratados=df_veiculos_tratados,
+            nome_etapa="M5.3.1",
+        )
+        if isinstance(df_m5_3_repescagem_input, pd.DataFrame) and not df_m5_3_repescagem_input.empty:
+            df_perfis_m5_3_repescagem = _copiar_ou_vazio(df_perfis_elegiveis_por_subregiao_m5_3)
+            col_sub_input = _primeira_coluna_existente(df_m5_3_repescagem_input, ["subregiao", "sub_regiao", "Sub-Região"])
+            col_sub_perfil = _primeira_coluna_existente(df_perfis_m5_3_repescagem, ["subregiao", "sub_regiao", "Sub-Região"])
+            if col_sub_input and col_sub_perfil and not df_perfis_m5_3_repescagem.empty:
+                subregioes_alvo = set(df_m5_3_repescagem_input[col_sub_input].dropna().astype(str))
+                df_perfis_m5_3_repescagem = df_perfis_m5_3_repescagem[
+                    df_perfis_m5_3_repescagem[col_sub_perfil].astype(str).isin(subregioes_alvo)
+                ].copy()
+            outputs_m5_3_1, _ = executar_m5_3_composicao_subregioes(
+                df_saldo_elegivel_composicao_m5_3=df_m5_3_repescagem_input,
+                df_perfis_elegiveis_por_subregiao_m5_3=df_perfis_m5_3_repescagem,
+                rodada_id=contexto.rodada_id,
+                data_base_roteirizacao=contexto.data_base,
+                tipo_roteirizacao=contexto.tipo_roteirizacao,
+                caminhos_pipeline=contexto.caminhos_pipeline,
+            )
+            df_premanifestos_m5_3_1 = _copiar_ou_vazio(outputs_m5_3_1.get("df_premanifestos_m5_3"))
+            df_itens_premanifestos_m5_3_1 = _copiar_ou_vazio(outputs_m5_3_1.get("df_itens_premanifestos_m5_3"))
+            df_manifestos_m5_3_1 = _copiar_ou_vazio(outputs_m5_3_1.get("df_manifestos_m5_3"))
+            df_itens_manifestos_m5_3_1 = _copiar_ou_vazio(outputs_m5_3_1.get("df_itens_manifestos_m5_3"))
+            df_premanifestos_m5_3_1, df_itens_premanifestos_m5_3_1 = _renomear_manifestos_repescagem(
+                df_premanifestos_m5_3_1,
+                df_itens_premanifestos_m5_3_1,
+                prefixo="PM531_",
+            )
+            df_manifestos_m5_3_1, df_itens_manifestos_m5_3_1 = _renomear_manifestos_repescagem(
+                df_manifestos_m5_3_1,
+                df_itens_manifestos_m5_3_1,
+                prefixo="PM531_",
+            )
+            df_premanifestos_m5_3 = pd.concat([_copiar_ou_vazio(df_premanifestos_m5_3), df_premanifestos_m5_3_1], ignore_index=True, sort=False)
+            df_itens_premanifestos_m5_3 = pd.concat(
+                [_copiar_ou_vazio(df_itens_premanifestos_m5_3), df_itens_premanifestos_m5_3_1],
+                ignore_index=True,
+                sort=False,
+            )
+            if isinstance(df_manifestos_m5_3_1, pd.DataFrame) and not df_manifestos_m5_3_1.empty:
+                df_manifestos_m5_3 = pd.concat([_copiar_ou_vazio(df_manifestos_m5_3), df_manifestos_m5_3_1], ignore_index=True, sort=False)
+            if isinstance(df_itens_manifestos_m5_3_1, pd.DataFrame) and not df_itens_manifestos_m5_3_1.empty:
+                df_itens_manifestos_m5_3 = pd.concat(
+                    [_copiar_ou_vazio(df_itens_manifestos_m5_3), df_itens_manifestos_m5_3_1],
+                    ignore_index=True,
+                    sort=False,
+                )
+            df_remanescente_m5_3 = _remover_itens_alocados_do_remanescente(df_remanescente_m5_3, df_itens_premanifestos_m5_3_1)
+            auditoria_reprocessamento_etapas["m5_3_1"] = {
+                **meta_m5_3_1,
+                "manifestos_adicionais": _safe_len(df_premanifestos_m5_3_1),
+                "itens_recuperados": _safe_len(df_itens_premanifestos_m5_3_1),
+                "remanescente_apos": _safe_len(df_remanescente_m5_3),
+            }
+        else:
+            auditoria_reprocessamento_etapas["m5_3_1"] = {
+                **meta_m5_3_1,
+                "manifestos_adicionais": 0,
+                "itens_recuperados": 0,
+                "remanescente_apos": _safe_len(df_remanescente_m5_3),
+            }
+    else:
+        auditoria_reprocessamento_etapas["m5_3_1"] = {
+            "ativado": False,
+            "motivo": "desligado_por_flag",
+            "manifestos_adicionais": 0,
+            "itens_recuperados": 0,
+            "remanescente_apos": _safe_len(df_remanescente_m5_3),
+        }
 
     logs.append(
         _log(
@@ -2059,6 +2496,96 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     _print_log(f"[M5.4] df_manifestos_m5_4 linhas={_safe_len(df_manifestos_m5_4)}")
     _print_log(f"[M5.4] df_itens_manifestos_m5_4 linhas={_safe_len(df_itens_manifestos_m5_4)}")
     _print_log(f"[M5.4] df_remanescente_m5_4 linhas={_safe_len(df_remanescente_m5_4)}")
+
+    if PIPELINE_FLAGS.get("executar_validadores_exaustao") and PIPELINE_FLAGS.get("executar_m5_4_repescagem"):
+        chaves_m5_4 = ["mesorregiao", "Mesoregião", "corredor_30g", "uf", "UF"]
+        col_meso_m5_4 = _primeira_coluna_existente(df_remanescente_m5_4, ["mesorregiao", "Mesoregião"])
+        col_corredor_m5_4 = _primeira_coluna_existente(df_remanescente_m5_4, ["corredor_30g"])
+        col_uf_m5_4 = _primeira_coluna_existente(df_remanescente_m5_4, ["uf", "UF"])
+        if col_meso_m5_4 and col_corredor_m5_4:
+            chaves_m5_4 = [col_meso_m5_4, col_corredor_m5_4]
+            if col_uf_m5_4:
+                chaves_m5_4.append(col_uf_m5_4)
+        elif col_meso_m5_4 and col_uf_m5_4:
+            chaves_m5_4 = [col_meso_m5_4, col_uf_m5_4]
+        df_m5_4_repescagem_input, meta_m5_4_1 = _filtrar_remanescentes_com_potencial(
+            df_remanescente_m5_4,
+            chaves_grupo=chaves_m5_4,
+            df_veiculos_tratados=df_veiculos_tratados,
+            nome_etapa="M5.4.1",
+        )
+        if isinstance(df_m5_4_repescagem_input, pd.DataFrame) and not df_m5_4_repescagem_input.empty:
+            df_perfis_m5_4_repescagem = _copiar_ou_vazio(df_perfis_elegiveis_por_mesorregiao_m5_4)
+            col_meso_input = _primeira_coluna_existente(df_m5_4_repescagem_input, ["mesorregiao", "Mesoregião"])
+            col_meso_perfil = _primeira_coluna_existente(df_perfis_m5_4_repescagem, ["mesorregiao", "Mesoregião"])
+            col_corredor_input = _primeira_coluna_existente(df_m5_4_repescagem_input, ["corredor_30g"])
+            col_corredor_perfil = _primeira_coluna_existente(df_perfis_m5_4_repescagem, ["corredor_30g"])
+            if col_meso_input and col_meso_perfil and not df_perfis_m5_4_repescagem.empty:
+                meso_alvo = set(df_m5_4_repescagem_input[col_meso_input].dropna().astype(str))
+                filtro = df_perfis_m5_4_repescagem[col_meso_perfil].astype(str).isin(meso_alvo)
+                if col_corredor_input and col_corredor_perfil:
+                    corredor_alvo = set(df_m5_4_repescagem_input[col_corredor_input].dropna().astype(str))
+                    filtro = filtro & df_perfis_m5_4_repescagem[col_corredor_perfil].astype(str).isin(corredor_alvo)
+                df_perfis_m5_4_repescagem = df_perfis_m5_4_repescagem[filtro].copy()
+            outputs_m5_4_1, _ = executar_m5_4b_composicao_mesorregioes(
+                df_saldo_elegivel_composicao_m5_4=df_m5_4_repescagem_input,
+                df_perfis_elegiveis_por_mesorregiao_m5_4=df_perfis_m5_4_repescagem,
+                rodada_id=contexto.rodada_id,
+                data_base_roteirizacao=contexto.data_base,
+                tipo_roteirizacao=contexto.tipo_roteirizacao,
+                caminhos_pipeline=contexto.caminhos_pipeline,
+            )
+            df_premanifestos_m5_4_1 = _copiar_ou_vazio(outputs_m5_4_1.get("df_premanifestos_m5_4"))
+            df_itens_premanifestos_m5_4_1 = _copiar_ou_vazio(outputs_m5_4_1.get("df_itens_premanifestos_m5_4"))
+            df_manifestos_m5_4_1 = _copiar_ou_vazio(outputs_m5_4_1.get("df_manifestos_m5_4"))
+            df_itens_manifestos_m5_4_1 = _copiar_ou_vazio(outputs_m5_4_1.get("df_itens_manifestos_m5_4"))
+            df_premanifestos_m5_4_1, df_itens_premanifestos_m5_4_1 = _renomear_manifestos_repescagem(
+                df_premanifestos_m5_4_1,
+                df_itens_premanifestos_m5_4_1,
+                prefixo="PM541_",
+            )
+            df_manifestos_m5_4_1, df_itens_manifestos_m5_4_1 = _renomear_manifestos_repescagem(
+                df_manifestos_m5_4_1,
+                df_itens_manifestos_m5_4_1,
+                prefixo="PM541_",
+            )
+            df_premanifestos_m5_4 = pd.concat([_copiar_ou_vazio(df_premanifestos_m5_4), df_premanifestos_m5_4_1], ignore_index=True, sort=False)
+            df_itens_premanifestos_m5_4 = pd.concat(
+                [_copiar_ou_vazio(df_itens_premanifestos_m5_4), df_itens_premanifestos_m5_4_1],
+                ignore_index=True,
+                sort=False,
+            )
+            if isinstance(df_manifestos_m5_4_1, pd.DataFrame) and not df_manifestos_m5_4_1.empty:
+                df_manifestos_m5_4 = pd.concat([_copiar_ou_vazio(df_manifestos_m5_4), df_manifestos_m5_4_1], ignore_index=True, sort=False)
+            if isinstance(df_itens_manifestos_m5_4_1, pd.DataFrame) and not df_itens_manifestos_m5_4_1.empty:
+                df_itens_manifestos_m5_4 = pd.concat(
+                    [_copiar_ou_vazio(df_itens_manifestos_m5_4), df_itens_manifestos_m5_4_1],
+                    ignore_index=True,
+                    sort=False,
+                )
+            df_remanescente_m5_4 = _remover_itens_alocados_do_remanescente(df_remanescente_m5_4, df_itens_premanifestos_m5_4_1)
+            auditoria_reprocessamento_etapas["m5_4_1"] = {
+                **meta_m5_4_1,
+                "manifestos_adicionais": _safe_len(df_premanifestos_m5_4_1),
+                "itens_recuperados": _safe_len(df_itens_premanifestos_m5_4_1),
+                "remanescente_apos": _safe_len(df_remanescente_m5_4),
+            }
+        else:
+            auditoria_reprocessamento_etapas["m5_4_1"] = {
+                **meta_m5_4_1,
+                "manifestos_adicionais": 0,
+                "itens_recuperados": 0,
+                "remanescente_apos": _safe_len(df_remanescente_m5_4),
+            }
+    else:
+        auditoria_reprocessamento_etapas["m5_4_1"] = {
+            "ativado": False,
+            "motivo": "desligado_por_flag",
+            "manifestos_adicionais": 0,
+            "itens_recuperados": 0,
+            "remanescente_apos": _safe_len(df_remanescente_m5_4),
+        }
+
     df_remanescente_global_final_roteirizacao = _consolidar_remanescente_global(
         df_saldo_nao_elegivel_m5_4,
         df_remanescente_m5_4,
@@ -2914,6 +3441,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             "agenda_vencida": len(agenda_vencida),
         },
     )
+    print("[VALIDADOR EXAUSTAO] resumo", auditoria_reprocessamento_etapas)
 
     resposta: Dict[str, Any] = {
         "status": "ok",
@@ -2969,6 +3497,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         "total_carteira": _safe_len(contexto.df_carteira_raw),
         "total_roteirizado": _safe_len(df_itens_manifestos_sequenciados_m7),
         "total_nao_roteirizado": _safe_len(df_remanescente_m6_2),
+        "auditoria_reprocessamento_etapas": auditoria_reprocessamento_etapas,
     }
 
     if retornar_auditoria_interna:
