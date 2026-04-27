@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import unicodedata
 import uuid
 from typing import Any, Dict, List
 
@@ -222,6 +223,139 @@ def _selecionar_colunas_reais_existentes(
     return df[existentes].copy()
 
 
+def _normalizar_perfil_comparacao(valor: Any) -> str:
+    texto = "" if valor is None else str(valor).strip().upper()
+    if not texto:
+        return ""
+    texto = unicodedata.normalize("NFKD", texto)
+    return "".join(ch for ch in texto if not unicodedata.combining(ch))
+
+
+def _validar_colunas_obrigatorias_veiculos(df_veiculos_tratados: pd.DataFrame) -> None:
+    colunas_obrigatorias = [
+        "perfil",
+        "tipo",
+        "qtd_eixos",
+        "capacidade_peso_kg",
+        "capacidade_vol_m3",
+        "max_entregas",
+        "max_km_distancia",
+        "ocupacao_minima_perc",
+        "ocupacao_maxima_perc",
+    ]
+    for coluna in colunas_obrigatorias:
+        if coluna not in df_veiculos_tratados.columns:
+            raise Exception(
+                f"Cadastro de veículos inválido no Motor 2: coluna obrigatória {coluna} ausente em "
+                "df_veiculos_tratados. O Sistema 1 deve enviar essa coluna no payload."
+            )
+
+
+def _anexar_dados_reais_veiculo_manifestos(
+    df_manifestos_m7: pd.DataFrame,
+    df_veiculos_tratados: pd.DataFrame,
+) -> pd.DataFrame:
+    df_manifestos = df_manifestos_m7.copy()
+
+    colunas_manifesto_obrigatorias = ["manifesto_id", "perfil_final_m6_2"]
+    faltando_manifestos = [c for c in colunas_manifesto_obrigatorias if c not in df_manifestos.columns]
+    if faltando_manifestos:
+        raise Exception(f"Contrato Sistema 1 inválido: manifestos_m7 sem colunas obrigatórias: {faltando_manifestos}")
+
+    colunas_veiculo_obrigatorias = [
+        "perfil",
+        "qtd_eixos",
+        "capacidade_peso_kg",
+        "capacidade_vol_m3",
+        "max_entregas",
+        "max_km_distancia",
+        "ocupacao_minima_perc",
+        "ocupacao_maxima_perc",
+    ]
+    faltando_veiculos = [c for c in colunas_veiculo_obrigatorias if c not in df_veiculos_tratados.columns]
+    if faltando_veiculos:
+        raise Exception(f"Contrato Sistema 1 inválido: df_veiculos_tratados sem colunas obrigatórias: {faltando_veiculos}")
+
+    df_manifestos["_perfil_norm"] = df_manifestos["perfil_final_m6_2"].apply(_normalizar_perfil_comparacao)
+    df_veiculos = df_veiculos_tratados[colunas_veiculo_obrigatorias].copy()
+    df_veiculos["_perfil_norm"] = df_veiculos["perfil"].apply(_normalizar_perfil_comparacao)
+
+    colunas_consistencia = [
+        "qtd_eixos",
+        "capacidade_peso_kg",
+        "capacidade_vol_m3",
+        "max_entregas",
+        "max_km_distancia",
+    ]
+    for perfil_norm, grupo in df_veiculos.groupby("_perfil_norm", dropna=False):
+        for coluna in colunas_consistencia:
+            if grupo[coluna].nunique(dropna=False) > 1:
+                perfil_base = grupo["perfil"].iloc[0] if len(grupo) > 0 else perfil_norm
+                raise Exception(
+                    f"Cadastro de veículos inconsistente: perfil {perfil_base} possui parâmetros divergentes entre veículos."
+                )
+
+    df_veiculos_unicos = df_veiculos.drop_duplicates(subset=["_perfil_norm"], keep="first")
+    df_manifestos = df_manifestos.merge(
+        df_veiculos_unicos,
+        on="_perfil_norm",
+        how="left",
+        suffixes=("", "_veiculo"),
+        indicator=True,
+    )
+
+    perfis_disponiveis = sorted(
+        df_veiculos_tratados["perfil"].dropna().astype(str).map(str.strip).replace("", pd.NA).dropna().unique().tolist()
+    )
+    nao_encontrados = df_manifestos[df_manifestos["_merge"] != "both"]
+    if not nao_encontrados.empty:
+        linha = nao_encontrados.iloc[0]
+        raise Exception(
+            "Contrato Sistema 1 inválido: manifesto "
+            f"{linha.get('manifesto_id')} com perfil_final_m6_2={linha.get('perfil_final_m6_2')} "
+            "não encontrou veículo correspondente em df_veiculos_tratados.perfil. "
+            f"Perfis disponíveis: {perfis_disponiveis}."
+        )
+
+    df_manifestos = df_manifestos.rename(
+        columns={
+            "capacidade_peso_kg": "capacidade_peso_kg_veiculo",
+            "capacidade_vol_m3": "capacidade_vol_m3_veiculo",
+            "max_entregas": "max_entregas_veiculo",
+            "max_km_distancia": "max_km_distancia_veiculo",
+            "ocupacao_minima_perc": "ocupacao_minima_perc_veiculo",
+            "ocupacao_maxima_perc": "ocupacao_maxima_perc_veiculo",
+        }
+    )
+
+    colunas_obrigatorias_pos_merge = [
+        "manifesto_id",
+        "perfil_final_m6_2",
+        "qtd_eixos",
+        "peso_final_m6_2",
+        "ocupacao_final_m6_2",
+        "km_total_estimado_m6_2",
+        "qtd_itens_final_m6_2",
+        "qtd_paradas_final_m6_2",
+        "capacidade_peso_kg_veiculo",
+        "max_km_distancia_veiculo",
+    ]
+    faltando_pos_merge = [c for c in colunas_obrigatorias_pos_merge if c not in df_manifestos.columns]
+    if faltando_pos_merge:
+        raise Exception(f"Contrato Sistema 1 inválido: manifestos_m7 sem colunas obrigatórias: {faltando_pos_merge}")
+
+    for coluna in colunas_obrigatorias_pos_merge:
+        if df_manifestos[coluna].isna().any():
+            manifestos_nulos = (
+                df_manifestos.loc[df_manifestos[coluna].isna(), "manifesto_id"].dropna().astype(str).unique().tolist()
+            )
+            raise Exception(
+                f"Contrato Sistema 1 inválido: coluna obrigatória {coluna} nula em manifestos {manifestos_nulos}."
+            )
+
+    return df_manifestos.drop(columns=["_perfil_norm", "_merge", "perfil"], errors="ignore")
+
+
 def _executar_m0_adapter(contexto: PipelineContext) -> Dict[str, Any]:
     inventario = {
         "rodada_id": contexto.rodada_id,
@@ -379,6 +513,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     df_geo_tratado = resultado_m1["df_geo_tratado"]
     df_parametros_tratados = resultado_m1["df_parametros_tratados"]
     df_veiculos_tratados = resultado_m1["df_veiculos_tratados"]
+    _validar_colunas_obrigatorias_veiculos(df_veiculos_tratados)
 
     resumo_m1 = {
         "carteira_colunas": int(len(df_carteira_tratada.columns)),
@@ -2651,12 +2786,33 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     if "tempo_total_pipeline_ms" not in metricas_tempo:
         metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
 
+    print("[CONTRATO SISTEMA1] colunas df_manifestos_m7:", list(df_manifestos_m7.columns))
+    print("[CONTRATO SISTEMA1] colunas df_veiculos_tratados:", list(df_veiculos_tratados.columns))
+    print(
+        "[CONTRATO SISTEMA1] perfis manifestos:",
+        sorted(df_manifestos_m7["perfil_final_m6_2"].dropna().astype(str).unique().tolist())
+        if "perfil_final_m6_2" in df_manifestos_m7.columns
+        else [],
+    )
+    print(
+        "[CONTRATO SISTEMA1] perfis veiculos:",
+        sorted(df_veiculos_tratados["perfil"].dropna().astype(str).unique().tolist())
+        if "perfil" in df_veiculos_tratados.columns
+        else [],
+    )
+
+    df_manifestos_m7 = _anexar_dados_reais_veiculo_manifestos(
+        df_manifestos_m7=df_manifestos_m7,
+        df_veiculos_tratados=df_veiculos_tratados,
+    )
+
     df_manifestos_m7_contrato = _selecionar_colunas_obrigatorias_contrato(
         df_manifestos_m7,
         [
             "manifesto_id", "origem_manifesto_modulo", "origem_manifesto_tipo", "perfil_final_m6_2", "qtd_eixos",
             "peso_final_m6_2", "ocupacao_final_m6_2", "km_total_estimado_m6_2", "qtd_itens_final_m6_2",
-            "qtd_paradas_final_m6_2", "capacidade_peso_kg_veiculo", "max_km_distancia_veiculo",
+            "qtd_paradas_final_m6_2", "capacidade_peso_kg_veiculo", "capacidade_vol_m3_veiculo", "max_entregas_veiculo",
+            "max_km_distancia_veiculo", "ocupacao_minima_perc_veiculo", "ocupacao_maxima_perc_veiculo",
         ],
         "manifestos_m7",
     )
@@ -2812,9 +2968,9 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         ]
         return {
             "status": "erro",
-            "mensagem": "Falha ao executar pipeline de roteirização.",
+            "mensagem": erro_tecnico,
             "pipeline_real_ate": "ERRO",
-            "modo_resposta": "auditoria_m7_sequenciamento_entregas",
+            "modo_resposta": "contrato_sistema1_m7_erro",
             "resposta_truncada": False,
             "teste_id_auditoria": None,
             "resumo_execucao": {
