@@ -277,8 +277,9 @@ def _anexar_dados_reais_veiculo_manifestos(
         raise Exception(f"Contrato Sistema 1 inválido: df_veiculos_tratados sem colunas obrigatórias: {faltando_veiculos}")
 
     df_manifestos["_perfil_norm"] = df_manifestos["perfil_final_m6_2"].apply(_normalizar_perfil_comparacao)
-    df_veiculos = df_veiculos_tratados[colunas_veiculo_obrigatorias].copy()
-    df_veiculos["_perfil_norm"] = df_veiculos["perfil"].apply(_normalizar_perfil_comparacao)
+
+    df_veiculos_ref = df_veiculos_tratados[colunas_veiculo_obrigatorias].copy()
+    df_veiculos_ref["_perfil_norm"] = df_veiculos_ref["perfil"].apply(_normalizar_perfil_comparacao)
 
     colunas_consistencia = [
         "qtd_eixos",
@@ -286,21 +287,36 @@ def _anexar_dados_reais_veiculo_manifestos(
         "capacidade_vol_m3",
         "max_entregas",
         "max_km_distancia",
+        "ocupacao_minima_perc",
+        "ocupacao_maxima_perc",
     ]
-    for perfil_norm, grupo in df_veiculos.groupby("_perfil_norm", dropna=False):
-        for coluna in colunas_consistencia:
-            if grupo[coluna].nunique(dropna=False) > 1:
-                perfil_base = grupo["perfil"].iloc[0] if len(grupo) > 0 else perfil_norm
-                raise Exception(
-                    f"Cadastro de veículos inconsistente: perfil {perfil_base} possui parâmetros divergentes entre veículos."
-                )
+    for perfil_norm, grupo in df_veiculos_ref.groupby("_perfil_norm", dropna=False):
+        perfil_base = grupo["perfil"].iloc[0] if len(grupo) > 0 else perfil_norm
+        if grupo[colunas_consistencia].drop_duplicates().shape[0] > 1:
+            raise Exception(
+                f"Cadastro de veículos inconsistente: perfil {perfil_base} possui parâmetros divergentes entre veículos."
+            )
 
-    df_veiculos_unicos = df_veiculos.drop_duplicates(subset=["_perfil_norm"], keep="first")
+    df_veiculos_ref = (
+        df_veiculos_ref.drop_duplicates(subset=["_perfil_norm"], keep="first")
+        .rename(
+            columns={
+                "perfil": "perfil_veiculo_cadastro",
+                "qtd_eixos": "qtd_eixos_cadastro",
+                "capacidade_peso_kg": "capacidade_peso_kg_cadastro",
+                "capacidade_vol_m3": "capacidade_vol_m3_cadastro",
+                "max_entregas": "max_entregas_cadastro",
+                "max_km_distancia": "max_km_distancia_cadastro",
+                "ocupacao_minima_perc": "ocupacao_minima_perc_cadastro",
+                "ocupacao_maxima_perc": "ocupacao_maxima_perc_cadastro",
+            }
+        )
+    )
+
     df_manifestos = df_manifestos.merge(
-        df_veiculos_unicos,
+        df_veiculos_ref,
         on="_perfil_norm",
         how="left",
-        suffixes=("", "_veiculo"),
         indicator=True,
     )
 
@@ -317,16 +333,28 @@ def _anexar_dados_reais_veiculo_manifestos(
             f"Perfis disponíveis: {perfis_disponiveis}."
         )
 
-    df_manifestos = df_manifestos.rename(
-        columns={
-            "capacidade_peso_kg": "capacidade_peso_kg_veiculo",
-            "capacidade_vol_m3": "capacidade_vol_m3_veiculo",
-            "max_entregas": "max_entregas_veiculo",
-            "max_km_distancia": "max_km_distancia_veiculo",
-            "ocupacao_minima_perc": "ocupacao_minima_perc_veiculo",
-            "ocupacao_maxima_perc": "ocupacao_maxima_perc_veiculo",
-        }
-    )
+    duplicadas = df_manifestos.columns[df_manifestos.columns.duplicated()].tolist()
+    if duplicadas:
+        raise Exception(f"Contrato Sistema 1 inválido: colunas duplicadas após merge de veículos: {duplicadas}")
+
+    mapeamento_destino_cadastro = {
+        "qtd_eixos": "qtd_eixos_cadastro",
+        "capacidade_peso_kg_veiculo": "capacidade_peso_kg_cadastro",
+        "capacidade_vol_m3_veiculo": "capacidade_vol_m3_cadastro",
+        "max_entregas_veiculo": "max_entregas_cadastro",
+        "max_km_distancia_veiculo": "max_km_distancia_cadastro",
+        "ocupacao_minima_perc_veiculo": "ocupacao_minima_perc_cadastro",
+        "ocupacao_maxima_perc_veiculo": "ocupacao_maxima_perc_cadastro",
+    }
+
+    for coluna_destino, coluna_cadastro in mapeamento_destino_cadastro.items():
+        if coluna_cadastro not in df_manifestos.columns:
+            raise Exception(f"Contrato Sistema 1 inválido: coluna ausente após merge de veículos: {coluna_cadastro}")
+
+        if coluna_destino in df_manifestos.columns:
+            df_manifestos[coluna_destino] = df_manifestos[coluna_destino].fillna(df_manifestos[coluna_cadastro])
+        else:
+            df_manifestos[coluna_destino] = df_manifestos[coluna_cadastro]
 
     colunas_obrigatorias_pos_merge = [
         "manifesto_id",
@@ -345,6 +373,8 @@ def _anexar_dados_reais_veiculo_manifestos(
         raise Exception(f"Contrato Sistema 1 inválido: manifestos_m7 sem colunas obrigatórias: {faltando_pos_merge}")
 
     for coluna in colunas_obrigatorias_pos_merge:
+        if isinstance(df_manifestos[coluna], pd.DataFrame):
+            raise Exception(f"Contrato Sistema 1 inválido: coluna duplicada detectada na validação: {coluna}")
         if df_manifestos[coluna].isna().any():
             manifestos_nulos = (
                 df_manifestos.loc[df_manifestos[coluna].isna(), "manifesto_id"].dropna().astype(str).unique().tolist()
@@ -353,7 +383,19 @@ def _anexar_dados_reais_veiculo_manifestos(
                 f"Contrato Sistema 1 inválido: coluna obrigatória {coluna} nula em manifestos {manifestos_nulos}."
             )
 
-    return df_manifestos.drop(columns=["_perfil_norm", "_merge", "perfil"], errors="ignore")
+    colunas_auxiliares = [
+        "_perfil_norm",
+        "_merge",
+        "perfil_veiculo_cadastro",
+        "qtd_eixos_cadastro",
+        "capacidade_peso_kg_cadastro",
+        "capacidade_vol_m3_cadastro",
+        "max_entregas_cadastro",
+        "max_km_distancia_cadastro",
+        "ocupacao_minima_perc_cadastro",
+        "ocupacao_maxima_perc_cadastro",
+    ]
+    return df_manifestos.drop(columns=colunas_auxiliares, errors="ignore")
 
 
 def _executar_m0_adapter(contexto: PipelineContext) -> Dict[str, Any]:
