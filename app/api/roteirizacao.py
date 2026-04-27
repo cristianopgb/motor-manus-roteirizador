@@ -18,9 +18,7 @@ router = APIRouter()
 async def roteirizar(payload: RoteirizacaoRequest):
     try:
         validar_payload(payload)
-        print("[PIPELINE] Executando núcleo validado")
         resultado_pipeline = executar_pipeline(payload)
-        print("[PIPELINE] Execução concluída")
 
         resposta = montar_resposta_sucesso(resultado_pipeline)
         resposta_sanitizada, substituicoes = sanitizar_json_safe(resposta)

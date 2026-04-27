@@ -39,6 +39,13 @@ PIPELINE_FLAGS = {
 }
 
 
+MODO_PRODUCAO_CONTRATO_SISTEMA1 = True
+PERSISTIR_AUDITORIA_MODULAR_PADRAO = False
+RETORNAR_AUDITORIA_INTERNA_PADRAO = False
+LOG_VERBOSE_PADRAO = False
+
+
+
 def _agora() -> float:
     return time.perf_counter()
 
@@ -164,6 +171,57 @@ def _consolidar_remanescente_global(df_a: Any, df_b: Any) -> pd.DataFrame:
     return df_consolidado
 
 
+def _persistir_snapshot_se_ativo(
+    auditoria_ativa: bool,
+    *,
+    teste_id: str,
+    rodada_id: str,
+    upload_id: str,
+    modulo: str,
+    ordem_modulo: int,
+    df_etapa: pd.DataFrame,
+    snapshot_nome: str,
+    contexto: dict,
+    rastreamento: dict,
+) -> int:
+    if not auditoria_ativa:
+        return 0
+    try:
+        return persistir_snapshot_modulo_auditoria(
+            teste_id=teste_id,
+            rodada_id=rodada_id,
+            upload_id=upload_id,
+            modulo=modulo,
+            ordem_modulo=ordem_modulo,
+            df_etapa=df_etapa,
+            snapshot_nome=snapshot_nome,
+            contexto=contexto,
+            rastreamento=rastreamento,
+        )
+    except Exception as exc:
+        print(f"[AUDITORIA] falha ao persistir snapshot={snapshot_nome}: {exc}")
+        return 0
+
+
+def _selecionar_colunas_obrigatorias_contrato(
+    df: pd.DataFrame,
+    colunas_obrigatorias: list[str],
+    nome: str,
+) -> pd.DataFrame:
+    faltando = [c for c in colunas_obrigatorias if c not in df.columns]
+    if faltando:
+        raise Exception(f"Contrato Sistema 1 inválido: {nome} sem colunas obrigatórias: {faltando}")
+    return df[colunas_obrigatorias].copy()
+
+
+def _selecionar_colunas_reais_existentes(
+    df: pd.DataFrame,
+    colunas_desejadas: list[str],
+) -> pd.DataFrame:
+    existentes = [c for c in colunas_desejadas if c in df.columns]
+    return df[existentes].copy()
+
+
 def _executar_m0_adapter(contexto: PipelineContext) -> Dict[str, Any]:
     inventario = {
         "rodada_id": contexto.rodada_id,
@@ -197,21 +255,29 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     logs: List[Dict[str, Any]] = []
     metricas_tempo: Dict[str, float] = {}
     debug = _is_debug(payload)
+    auditoria_ativa = debug or not MODO_PRODUCAO_CONTRATO_SISTEMA1
+    retornar_auditoria_interna = debug or not MODO_PRODUCAO_CONTRATO_SISTEMA1
+    log_verbose = debug or not MODO_PRODUCAO_CONTRATO_SISTEMA1
     teste_id_auditoria = str(uuid.uuid4())
     auditoria_por_modulo: Dict[str, int] = {}
     auditoria_por_snapshot: Dict[str, int] = {}
     auditoria_flat_rastreamento: Dict[str, Any] = {"colunas_persistidas": set()}
-    print("[AUDITORIA] teste_id:", teste_id_auditoria)
-    print("[PIPELINE FLAGS] executar_m4=", PIPELINE_FLAGS["executar_m4"])
-    print("[PIPELINE FLAGS] executar_m5_1=", PIPELINE_FLAGS["executar_m5_1"])
-    print("[PIPELINE FLAGS] executar_m5_2=", PIPELINE_FLAGS["executar_m5_2"])
-    print("[PIPELINE FLAGS] executar_m5_3a=", PIPELINE_FLAGS["executar_m5_3a"])
-    print("[PIPELINE FLAGS] executar_m5_3b=", PIPELINE_FLAGS["executar_m5_3b"])
-    print("[PIPELINE FLAGS] executar_m5_4a=", PIPELINE_FLAGS["executar_m5_4a"])
-    print("[PIPELINE FLAGS] executar_m5_4b=", PIPELINE_FLAGS["executar_m5_4b"])
-    print("[PIPELINE FLAGS] executar_m6_1=", PIPELINE_FLAGS["executar_m6_1"])
-    print("[PIPELINE FLAGS] executar_m6_2=", PIPELINE_FLAGS["executar_m6_2"])
-    print("[PIPELINE FLAGS] executar_m7=", PIPELINE_FLAGS["executar_m7"])
+    def _print_log(*args: Any, force: bool = False) -> None:
+        if force or log_verbose:
+            print(*args)
+
+    _print_log("[PIPELINE] Executando núcleo validado", force=True)
+    _print_log("[AUDITORIA] teste_id:", teste_id_auditoria)
+    _print_log("[PIPELINE FLAGS] executar_m4=", PIPELINE_FLAGS["executar_m4"])
+    _print_log("[PIPELINE FLAGS] executar_m5_1=", PIPELINE_FLAGS["executar_m5_1"])
+    _print_log("[PIPELINE FLAGS] executar_m5_2=", PIPELINE_FLAGS["executar_m5_2"])
+    _print_log("[PIPELINE FLAGS] executar_m5_3a=", PIPELINE_FLAGS["executar_m5_3a"])
+    _print_log("[PIPELINE FLAGS] executar_m5_3b=", PIPELINE_FLAGS["executar_m5_3b"])
+    _print_log("[PIPELINE FLAGS] executar_m5_4a=", PIPELINE_FLAGS["executar_m5_4a"])
+    _print_log("[PIPELINE FLAGS] executar_m5_4b=", PIPELINE_FLAGS["executar_m5_4b"])
+    _print_log("[PIPELINE FLAGS] executar_m6_1=", PIPELINE_FLAGS["executar_m6_1"])
+    _print_log("[PIPELINE FLAGS] executar_m6_2=", PIPELINE_FLAGS["executar_m6_2"])
+    _print_log("[PIPELINE FLAGS] executar_m7=", PIPELINE_FLAGS["executar_m7"])
 
     # =========================================================================================
     # PAYLOAD -> CONTEXTO
@@ -243,7 +309,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         "tipo_roteirizacao": contexto.tipo_roteirizacao,
         "data_base_roteirizacao": contexto.data_base.isoformat(),
     }
-    total_payload = persistir_snapshot_modulo_auditoria(
+    total_payload = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -256,7 +322,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["payload_service"] = auditoria_por_modulo.get("payload_service", 0) + total_payload
     auditoria_por_snapshot["payload_service"] = auditoria_por_snapshot.get("payload_service", 0) + total_payload
-    print(f"[AUDITORIA FLAT] snapshot=payload_service linhas={total_payload}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=payload_service linhas={total_payload}")
 
     # =========================================================================================
     # M0
@@ -281,7 +347,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             },
         )
     )
-    total_m0 = persistir_snapshot_modulo_auditoria(
+    total_m0 = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -294,7 +360,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m0_adapter"] = auditoria_por_modulo.get("m0_adapter", 0) + total_m0
     auditoria_por_snapshot["m0_adapter"] = auditoria_por_snapshot.get("m0_adapter", 0) + total_m0
-    print(f"[AUDITORIA FLAT] snapshot=m0_adapter linhas={total_m0}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m0_adapter linhas={total_m0}")
 
     # =========================================================================================
     # M1
@@ -332,7 +398,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             extra=resumo_m1,
         )
     )
-    total_m1 = persistir_snapshot_modulo_auditoria(
+    total_m1 = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -345,7 +411,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m1_padronizacao"] = auditoria_por_modulo.get("m1_padronizacao", 0) + total_m1
     auditoria_por_snapshot["m1_padronizacao"] = auditoria_por_snapshot.get("m1_padronizacao", 0) + total_m1
-    print(f"[AUDITORIA FLAT] snapshot=m1_padronizacao linhas={total_m1}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m1_padronizacao linhas={total_m1}")
 
     # =========================================================================================
     # M2
@@ -372,7 +438,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             extra=resumo_m2,
         )
     )
-    total_m2 = persistir_snapshot_modulo_auditoria(
+    total_m2 = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -385,7 +451,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m2_enriquecimento"] = auditoria_por_modulo.get("m2_enriquecimento", 0) + total_m2
     auditoria_por_snapshot["m2_enriquecimento"] = auditoria_por_snapshot.get("m2_enriquecimento", 0) + total_m2
-    print(f"[AUDITORIA FLAT] snapshot=m2_enriquecimento linhas={total_m2}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m2_enriquecimento linhas={total_m2}")
 
     # =========================================================================================
     # M3
@@ -417,7 +483,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             extra=resumo_m3,
         )
     )
-    total_m3 = persistir_snapshot_modulo_auditoria(
+    total_m3 = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -430,7 +496,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m3_triagem"] = auditoria_por_modulo.get("m3_triagem", 0) + total_m3
     auditoria_por_snapshot["m3_triagem"] = auditoria_por_snapshot.get("m3_triagem", 0) + total_m3
-    print(f"[AUDITORIA FLAT] snapshot=m3_triagem linhas={total_m3}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m3_triagem linhas={total_m3}")
 
 
     # =========================================================================================
@@ -458,7 +524,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             extra=resumo_m31,
         )
     )
-    total_m3_1 = persistir_snapshot_modulo_auditoria(
+    total_m3_1 = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -471,12 +537,12 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m3_1_validacao_fronteira"] = auditoria_por_modulo.get("m3_1_validacao_fronteira", 0) + total_m3_1
     auditoria_por_snapshot["m3_1_validacao_fronteira"] = auditoria_por_snapshot.get("m3_1_validacao_fronteira", 0) + total_m3_1
-    print(f"[AUDITORIA FLAT] snapshot=m3_1_validacao_fronteira linhas={total_m3_1}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m3_1_validacao_fronteira linhas={total_m3_1}")
 
     if not PIPELINE_FLAGS["executar_m4"]:
         tempo_total = _duracao_ms(inicio_total)
         metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
-        print(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
+        _print_log(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
         return {
             "status": "ok",
             "mensagem": "Execução encerrada propositalmente na etapa base de auditoria (M3.1).",
@@ -525,7 +591,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # priorizar sempre os DATAFRAMES OFICIAIS DE ITENS de cada etapa (não apenas resumos/manifestos agregados),
     # mantendo o histórico linha a linha do dataset operacional.
     t0 = _agora()
-    print(f"[M4] executando M4 com input oficial do bloco 4 linhas={_safe_len(df_input_oficial_bloco_4)}")
+    _print_log(f"[M4] executando M4 com input oficial do bloco 4 linhas={_safe_len(df_input_oficial_bloco_4)}")
     outputs_m4, meta_m4 = executar_m4_manifestos_fechados(
         df_input_oficial_bloco_4=df_input_oficial_bloco_4,
         df_veiculos_tratados=df_veiculos_tratados,
@@ -562,9 +628,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     df_remanescente_roteirizavel_bloco_4 = df_remanescente_m4
     df_itens_manifestados_m4 = df_itens_m4
 
-    print(f"[M4] df_manifestos_m4 linhas={_safe_len(df_manifestos_m4)}")
-    print(f"[M4] df_itens_m4 linhas={_safe_len(df_itens_m4)}")
-    print(f"[M4] df_remanescente_m4 linhas={_safe_len(df_remanescente_m4)}")
+    _print_log(f"[M4] df_manifestos_m4 linhas={_safe_len(df_manifestos_m4)}", force=not log_verbose)
+    _print_log(f"[M4] df_itens_m4 linhas={_safe_len(df_itens_m4)}")
+    _print_log(f"[M4] df_remanescente_m4 linhas={_safe_len(df_remanescente_m4)}")
 
     logs.append(
         _log(
@@ -582,7 +648,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             },
         )
     )
-    total_m4_manifestos = persistir_snapshot_modulo_auditoria(
+    total_m4_manifestos = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -595,9 +661,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m4_manifestos_fechados"] = auditoria_por_modulo.get("m4_manifestos_fechados", 0) + total_m4_manifestos
     auditoria_por_snapshot["m4_manifestos"] = auditoria_por_snapshot.get("m4_manifestos", 0) + total_m4_manifestos
-    print(f"[AUDITORIA FLAT] snapshot=m4_manifestos linhas={total_m4_manifestos}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m4_manifestos linhas={total_m4_manifestos}")
 
-    total_m4_itens = persistir_snapshot_modulo_auditoria(
+    total_m4_itens = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -610,9 +676,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m4_manifestos_fechados"] = auditoria_por_modulo.get("m4_manifestos_fechados", 0) + total_m4_itens
     auditoria_por_snapshot["m4_itens"] = auditoria_por_snapshot.get("m4_itens", 0) + total_m4_itens
-    print(f"[AUDITORIA FLAT] snapshot=m4_itens linhas={total_m4_itens}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m4_itens linhas={total_m4_itens}")
 
-    total_m4_remanescente = persistir_snapshot_modulo_auditoria(
+    total_m4_remanescente = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -625,12 +691,12 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m4_manifestos_fechados"] = auditoria_por_modulo.get("m4_manifestos_fechados", 0) + total_m4_remanescente
     auditoria_por_snapshot["m4_remanescente"] = auditoria_por_snapshot.get("m4_remanescente", 0) + total_m4_remanescente
-    print(f"[AUDITORIA FLAT] snapshot=m4_remanescente linhas={total_m4_remanescente}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m4_remanescente linhas={total_m4_remanescente}")
 
     if not PIPELINE_FLAGS["executar_m5_1"]:
         tempo_total = _duracao_ms(inicio_total)
         metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
-        print(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
+        _print_log(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
         return {
             "status": "ok",
             "mensagem": "Execução encerrada propositalmente após o M4 para auditoria operacional desta etapa.",
@@ -688,7 +754,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # M5.1
     # =========================================================================================
     t0 = _agora()
-    print(f"[M5.1] executando M5.1 com remanescente do M4 linhas={_safe_len(df_remanescente_roteirizavel_bloco_4)}")
+    _print_log(f"[M5.1] executando M5.1 com remanescente do M4 linhas={_safe_len(df_remanescente_roteirizavel_bloco_4)}")
     outputs_m5_1, meta_m5_1 = executar_m5_1_triagem_cidades(
         df_remanescente_roteirizavel_bloco_4=df_remanescente_roteirizavel_bloco_4,
         df_veiculos_tratados=df_veiculos_tratados,
@@ -705,12 +771,12 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     df_perfis_descartados_por_cidade_m5_1 = outputs_m5_1["df_perfis_descartados_por_cidade_m5_1"]
     df_tentativas_triagem_cidades_m5_1 = outputs_m5_1["df_tentativas_triagem_cidades_m5_1"]
 
-    print(f"[M5.1] df_cidades_consolidadas_m5_1 linhas={_safe_len(df_cidades_consolidadas_m5_1)}")
-    print(f"[M5.1] df_perfis_elegiveis_por_cidade_m5_1 linhas={_safe_len(df_perfis_elegiveis_por_cidade_m5_1)}")
-    print(f"[M5.1] df_perfis_descartados_por_cidade_m5_1 linhas={_safe_len(df_perfis_descartados_por_cidade_m5_1)}")
-    print(f"[M5.1] df_saldo_elegivel_composicao_m5_1 linhas={_safe_len(df_saldo_elegivel_composicao_m5_1)}")
-    print(f"[M5.1] df_saldo_nao_elegivel_m5_1 linhas={_safe_len(df_saldo_nao_elegivel_m5_1)}")
-    print(f"[M5.1] df_tentativas_triagem_cidades_m5_1 linhas={_safe_len(df_tentativas_triagem_cidades_m5_1)}")
+    _print_log(f"[M5.1] df_cidades_consolidadas_m5_1 linhas={_safe_len(df_cidades_consolidadas_m5_1)}")
+    _print_log(f"[M5.1] df_perfis_elegiveis_por_cidade_m5_1 linhas={_safe_len(df_perfis_elegiveis_por_cidade_m5_1)}")
+    _print_log(f"[M5.1] df_perfis_descartados_por_cidade_m5_1 linhas={_safe_len(df_perfis_descartados_por_cidade_m5_1)}")
+    _print_log(f"[M5.1] df_saldo_elegivel_composicao_m5_1 linhas={_safe_len(df_saldo_elegivel_composicao_m5_1)}")
+    _print_log(f"[M5.1] df_saldo_nao_elegivel_m5_1 linhas={_safe_len(df_saldo_nao_elegivel_m5_1)}")
+    _print_log(f"[M5.1] df_tentativas_triagem_cidades_m5_1 linhas={_safe_len(df_tentativas_triagem_cidades_m5_1)}")
 
     logs.append(
         _log(
@@ -723,7 +789,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             extra=resumo_m5_1,
         )
     )
-    total_m5_1_cidades_consolidadas = persistir_snapshot_modulo_auditoria(
+    total_m5_1_cidades_consolidadas = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -736,9 +802,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_1_triagem_cidades"] = auditoria_por_modulo.get("m5_1_triagem_cidades", 0) + total_m5_1_cidades_consolidadas
     auditoria_por_snapshot["m5_1_cidades_consolidadas"] = auditoria_por_snapshot.get("m5_1_cidades_consolidadas", 0) + total_m5_1_cidades_consolidadas
-    print(f"[AUDITORIA FLAT] snapshot=m5_1_cidades_consolidadas linhas={total_m5_1_cidades_consolidadas}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_1_cidades_consolidadas linhas={total_m5_1_cidades_consolidadas}")
 
-    total_m5_1_perfis_viaveis = persistir_snapshot_modulo_auditoria(
+    total_m5_1_perfis_viaveis = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -752,7 +818,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     auditoria_por_modulo["m5_1_triagem_cidades"] = auditoria_por_modulo.get("m5_1_triagem_cidades", 0) + total_m5_1_perfis_viaveis
     auditoria_por_snapshot["m5_1_perfis_viaveis"] = auditoria_por_snapshot.get("m5_1_perfis_viaveis", 0) + total_m5_1_perfis_viaveis
 
-    total_m5_1_perfis_elegiveis = persistir_snapshot_modulo_auditoria(
+    total_m5_1_perfis_elegiveis = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -765,9 +831,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_1_triagem_cidades"] = auditoria_por_modulo.get("m5_1_triagem_cidades", 0) + total_m5_1_perfis_elegiveis
     auditoria_por_snapshot["m5_1_perfis_elegiveis"] = auditoria_por_snapshot.get("m5_1_perfis_elegiveis", 0) + total_m5_1_perfis_elegiveis
-    print(f"[AUDITORIA FLAT] snapshot=m5_1_perfis_elegiveis linhas={total_m5_1_perfis_elegiveis}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_1_perfis_elegiveis linhas={total_m5_1_perfis_elegiveis}")
 
-    total_m5_1_perfis_descartados = persistir_snapshot_modulo_auditoria(
+    total_m5_1_perfis_descartados = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -781,7 +847,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     auditoria_por_modulo["m5_1_triagem_cidades"] = auditoria_por_modulo.get("m5_1_triagem_cidades", 0) + total_m5_1_perfis_descartados
     auditoria_por_snapshot["m5_1_perfis_descartados"] = auditoria_por_snapshot.get("m5_1_perfis_descartados", 0) + total_m5_1_perfis_descartados
 
-    total_m5_1_saldo_elegivel = persistir_snapshot_modulo_auditoria(
+    total_m5_1_saldo_elegivel = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -794,9 +860,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_1_triagem_cidades"] = auditoria_por_modulo.get("m5_1_triagem_cidades", 0) + total_m5_1_saldo_elegivel
     auditoria_por_snapshot["m5_1_saldo_elegivel"] = auditoria_por_snapshot.get("m5_1_saldo_elegivel", 0) + total_m5_1_saldo_elegivel
-    print(f"[AUDITORIA FLAT] snapshot=m5_1_saldo_elegivel linhas={total_m5_1_saldo_elegivel}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_1_saldo_elegivel linhas={total_m5_1_saldo_elegivel}")
 
-    total_m5_1_saldo_nao_elegivel = persistir_snapshot_modulo_auditoria(
+    total_m5_1_saldo_nao_elegivel = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -809,9 +875,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_1_triagem_cidades"] = auditoria_por_modulo.get("m5_1_triagem_cidades", 0) + total_m5_1_saldo_nao_elegivel
     auditoria_por_snapshot["m5_1_saldo_nao_elegivel"] = auditoria_por_snapshot.get("m5_1_saldo_nao_elegivel", 0) + total_m5_1_saldo_nao_elegivel
-    print(f"[AUDITORIA FLAT] snapshot=m5_1_saldo_nao_elegivel linhas={total_m5_1_saldo_nao_elegivel}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_1_saldo_nao_elegivel linhas={total_m5_1_saldo_nao_elegivel}")
 
-    total_m5_1_tentativas = persistir_snapshot_modulo_auditoria(
+    total_m5_1_tentativas = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -824,12 +890,12 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_1_triagem_cidades"] = auditoria_por_modulo.get("m5_1_triagem_cidades", 0) + total_m5_1_tentativas
     auditoria_por_snapshot["m5_1_tentativas"] = auditoria_por_snapshot.get("m5_1_tentativas", 0) + total_m5_1_tentativas
-    print(f"[AUDITORIA FLAT] snapshot=m5_1_tentativas linhas={total_m5_1_tentativas}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_1_tentativas linhas={total_m5_1_tentativas}")
 
     if not PIPELINE_FLAGS["executar_m5_2"]:
         tempo_total = _duracao_ms(inicio_total)
         metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
-        print(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
+        _print_log(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
         return {
             "status": "ok",
             "mensagem": "Execução encerrada propositalmente após o M5.1 para auditoria operacional desta etapa.",
@@ -886,7 +952,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # M5.2
     # =========================================================================================
     t0 = _agora()
-    print(f"[M5.2] executando M5.2 com saldo elegivel linhas={_safe_len(df_saldo_elegivel_composicao_m5_1)}")
+    _print_log(f"[M5.2] executando M5.2 com saldo elegivel linhas={_safe_len(df_saldo_elegivel_composicao_m5_1)}")
     m5_2_tem_saldo = isinstance(df_saldo_elegivel_composicao_m5_1, pd.DataFrame) and not df_saldo_elegivel_composicao_m5_1.empty
     m5_2_tem_perfis = isinstance(df_perfis_elegiveis_por_cidade_m5_1, pd.DataFrame) and not df_perfis_elegiveis_por_cidade_m5_1.empty
     if m5_2_tem_saldo and m5_2_tem_perfis:
@@ -924,10 +990,10 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     df_itens_premanifestos_m5_2 = outputs_m5_2["df_itens_premanifestos_m5_2"]
     df_remanescente_m5_2 = outputs_m5_2["df_remanescente_m5_2"]
     df_tentativas_m5_2 = outputs_m5_2["df_tentativas_m5_2"]
-    print(f"[M5.2] df_premanifestos_m5_2 linhas={_safe_len(df_premanifestos_m5_2)}")
-    print(f"[M5.2] df_itens_premanifestos_m5_2 linhas={_safe_len(df_itens_premanifestos_m5_2)}")
-    print(f"[M5.2] df_remanescente_m5_2 linhas={_safe_len(df_remanescente_m5_2)}")
-    print(f"[M5.2] df_tentativas_m5_2 linhas={_safe_len(df_tentativas_m5_2)}")
+    _print_log(f"[M5.2] df_premanifestos_m5_2 linhas={_safe_len(df_premanifestos_m5_2)}")
+    _print_log(f"[M5.2] df_itens_premanifestos_m5_2 linhas={_safe_len(df_itens_premanifestos_m5_2)}", force=not log_verbose)
+    _print_log(f"[M5.2] df_remanescente_m5_2 linhas={_safe_len(df_remanescente_m5_2)}")
+    _print_log(f"[M5.2] df_tentativas_m5_2 linhas={_safe_len(df_tentativas_m5_2)}")
 
     logs.append(
         _log(
@@ -945,7 +1011,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         )
     )
 
-    total_m5_2_premanifestos = persistir_snapshot_modulo_auditoria(
+    total_m5_2_premanifestos = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -958,9 +1024,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_2_composicao_cidades"] = auditoria_por_modulo.get("m5_2_composicao_cidades", 0) + total_m5_2_premanifestos
     auditoria_por_snapshot["m5_2_premanifestos"] = auditoria_por_snapshot.get("m5_2_premanifestos", 0) + total_m5_2_premanifestos
-    print(f"[AUDITORIA FLAT] snapshot=m5_2_premanifestos linhas={total_m5_2_premanifestos}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_2_premanifestos linhas={total_m5_2_premanifestos}")
 
-    total_m5_2_itens_premanifestos = persistir_snapshot_modulo_auditoria(
+    total_m5_2_itens_premanifestos = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -973,9 +1039,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_2_composicao_cidades"] = auditoria_por_modulo.get("m5_2_composicao_cidades", 0) + total_m5_2_itens_premanifestos
     auditoria_por_snapshot["m5_2_itens_premanifestos"] = auditoria_por_snapshot.get("m5_2_itens_premanifestos", 0) + total_m5_2_itens_premanifestos
-    print(f"[AUDITORIA FLAT] snapshot=m5_2_itens_premanifestos linhas={total_m5_2_itens_premanifestos}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_2_itens_premanifestos linhas={total_m5_2_itens_premanifestos}")
 
-    total_m5_2_remanescente = persistir_snapshot_modulo_auditoria(
+    total_m5_2_remanescente = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -988,9 +1054,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_2_composicao_cidades"] = auditoria_por_modulo.get("m5_2_composicao_cidades", 0) + total_m5_2_remanescente
     auditoria_por_snapshot["m5_2_remanescente"] = auditoria_por_snapshot.get("m5_2_remanescente", 0) + total_m5_2_remanescente
-    print(f"[AUDITORIA FLAT] snapshot=m5_2_remanescente linhas={total_m5_2_remanescente}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_2_remanescente linhas={total_m5_2_remanescente}")
 
-    total_m5_2_tentativas = persistir_snapshot_modulo_auditoria(
+    total_m5_2_tentativas = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1003,12 +1069,12 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_2_composicao_cidades"] = auditoria_por_modulo.get("m5_2_composicao_cidades", 0) + total_m5_2_tentativas
     auditoria_por_snapshot["m5_2_tentativas"] = auditoria_por_snapshot.get("m5_2_tentativas", 0) + total_m5_2_tentativas
-    print(f"[AUDITORIA FLAT] snapshot=m5_2_tentativas linhas={total_m5_2_tentativas}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_2_tentativas linhas={total_m5_2_tentativas}")
 
     if not PIPELINE_FLAGS["executar_m5_3a"]:
         tempo_total = _duracao_ms(inicio_total)
         metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
-        print(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
+        _print_log(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
         return {
             "status": "ok",
             "mensagem": "Execução encerrada propositalmente após o M5.2 para auditoria operacional desta etapa.",
@@ -1061,7 +1127,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         df_remanescente_m5_2,
     )
     t0 = _agora()
-    print(
+    _print_log(
         "[M5.3A] executando M5.3A com remanescente global ate M5.2 "
         f"linhas={_safe_len(df_remanescente_global_ate_m5_2)}"
     )
@@ -1081,12 +1147,12 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     df_saldo_elegivel_composicao_m5_3 = outputs_m5_3a["df_saldo_elegivel_composicao_m5_3"]
     df_saldo_nao_elegivel_m5_3 = outputs_m5_3a["df_saldo_nao_elegivel_m5_3"]
     df_tentativas_triagem_subregioes_m5_3 = outputs_m5_3a["df_tentativas_triagem_subregioes_m5_3"]
-    print(f"[M5.3A] df_subregioes_consolidadas_m5_3 linhas={_safe_len(df_subregioes_consolidadas_m5_3)}")
-    print(f"[M5.3A] df_perfis_elegiveis_por_subregiao_m5_3 linhas={_safe_len(df_perfis_elegiveis_por_subregiao_m5_3)}")
-    print(f"[M5.3A] df_perfis_descartados_por_subregiao_m5_3 linhas={_safe_len(df_perfis_descartados_por_subregiao_m5_3)}")
-    print(f"[M5.3A] df_saldo_elegivel_composicao_m5_3 linhas={_safe_len(df_saldo_elegivel_composicao_m5_3)}")
-    print(f"[M5.3A] df_saldo_nao_elegivel_m5_3 linhas={_safe_len(df_saldo_nao_elegivel_m5_3)}")
-    print(f"[M5.3A] df_tentativas_triagem_subregioes_m5_3 linhas={_safe_len(df_tentativas_triagem_subregioes_m5_3)}")
+    _print_log(f"[M5.3A] df_subregioes_consolidadas_m5_3 linhas={_safe_len(df_subregioes_consolidadas_m5_3)}")
+    _print_log(f"[M5.3A] df_perfis_elegiveis_por_subregiao_m5_3 linhas={_safe_len(df_perfis_elegiveis_por_subregiao_m5_3)}")
+    _print_log(f"[M5.3A] df_perfis_descartados_por_subregiao_m5_3 linhas={_safe_len(df_perfis_descartados_por_subregiao_m5_3)}")
+    _print_log(f"[M5.3A] df_saldo_elegivel_composicao_m5_3 linhas={_safe_len(df_saldo_elegivel_composicao_m5_3)}")
+    _print_log(f"[M5.3A] df_saldo_nao_elegivel_m5_3 linhas={_safe_len(df_saldo_nao_elegivel_m5_3)}")
+    _print_log(f"[M5.3A] df_tentativas_triagem_subregioes_m5_3 linhas={_safe_len(df_tentativas_triagem_subregioes_m5_3)}")
 
     logs.append(
         _log(
@@ -1106,7 +1172,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             },
         )
     )
-    total_m5_3a_subregioes_consolidadas = persistir_snapshot_modulo_auditoria(
+    total_m5_3a_subregioes_consolidadas = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1119,9 +1185,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_3a_triagem_subregioes"] = auditoria_por_modulo.get("m5_3a_triagem_subregioes", 0) + total_m5_3a_subregioes_consolidadas
     auditoria_por_snapshot["m5_3a_subregioes_consolidadas"] = auditoria_por_snapshot.get("m5_3a_subregioes_consolidadas", 0) + total_m5_3a_subregioes_consolidadas
-    print(f"[AUDITORIA FLAT] snapshot=m5_3a_subregioes_consolidadas linhas={total_m5_3a_subregioes_consolidadas}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_3a_subregioes_consolidadas linhas={total_m5_3a_subregioes_consolidadas}")
 
-    total_m5_3a_perfis_viaveis = persistir_snapshot_modulo_auditoria(
+    total_m5_3a_perfis_viaveis = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1134,9 +1200,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_3a_triagem_subregioes"] = auditoria_por_modulo.get("m5_3a_triagem_subregioes", 0) + total_m5_3a_perfis_viaveis
     auditoria_por_snapshot["m5_3a_perfis_viaveis"] = auditoria_por_snapshot.get("m5_3a_perfis_viaveis", 0) + total_m5_3a_perfis_viaveis
-    print(f"[AUDITORIA FLAT] snapshot=m5_3a_perfis_viaveis linhas={total_m5_3a_perfis_viaveis}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_3a_perfis_viaveis linhas={total_m5_3a_perfis_viaveis}")
 
-    total_m5_3a_perfis_elegiveis = persistir_snapshot_modulo_auditoria(
+    total_m5_3a_perfis_elegiveis = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1149,9 +1215,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_3a_triagem_subregioes"] = auditoria_por_modulo.get("m5_3a_triagem_subregioes", 0) + total_m5_3a_perfis_elegiveis
     auditoria_por_snapshot["m5_3a_perfis_elegiveis"] = auditoria_por_snapshot.get("m5_3a_perfis_elegiveis", 0) + total_m5_3a_perfis_elegiveis
-    print(f"[AUDITORIA FLAT] snapshot=m5_3a_perfis_elegiveis linhas={total_m5_3a_perfis_elegiveis}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_3a_perfis_elegiveis linhas={total_m5_3a_perfis_elegiveis}")
 
-    total_m5_3a_perfis_descartados = persistir_snapshot_modulo_auditoria(
+    total_m5_3a_perfis_descartados = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1164,9 +1230,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_3a_triagem_subregioes"] = auditoria_por_modulo.get("m5_3a_triagem_subregioes", 0) + total_m5_3a_perfis_descartados
     auditoria_por_snapshot["m5_3a_perfis_descartados"] = auditoria_por_snapshot.get("m5_3a_perfis_descartados", 0) + total_m5_3a_perfis_descartados
-    print(f"[AUDITORIA FLAT] snapshot=m5_3a_perfis_descartados linhas={total_m5_3a_perfis_descartados}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_3a_perfis_descartados linhas={total_m5_3a_perfis_descartados}")
 
-    total_m5_3a_saldo_elegivel = persistir_snapshot_modulo_auditoria(
+    total_m5_3a_saldo_elegivel = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1179,9 +1245,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_3a_triagem_subregioes"] = auditoria_por_modulo.get("m5_3a_triagem_subregioes", 0) + total_m5_3a_saldo_elegivel
     auditoria_por_snapshot["m5_3a_saldo_elegivel"] = auditoria_por_snapshot.get("m5_3a_saldo_elegivel", 0) + total_m5_3a_saldo_elegivel
-    print(f"[AUDITORIA FLAT] snapshot=m5_3a_saldo_elegivel linhas={total_m5_3a_saldo_elegivel}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_3a_saldo_elegivel linhas={total_m5_3a_saldo_elegivel}")
 
-    total_m5_3a_saldo_nao_elegivel = persistir_snapshot_modulo_auditoria(
+    total_m5_3a_saldo_nao_elegivel = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1194,9 +1260,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_3a_triagem_subregioes"] = auditoria_por_modulo.get("m5_3a_triagem_subregioes", 0) + total_m5_3a_saldo_nao_elegivel
     auditoria_por_snapshot["m5_3a_saldo_nao_elegivel"] = auditoria_por_snapshot.get("m5_3a_saldo_nao_elegivel", 0) + total_m5_3a_saldo_nao_elegivel
-    print(f"[AUDITORIA FLAT] snapshot=m5_3a_saldo_nao_elegivel linhas={total_m5_3a_saldo_nao_elegivel}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_3a_saldo_nao_elegivel linhas={total_m5_3a_saldo_nao_elegivel}")
 
-    total_m5_3a_tentativas = persistir_snapshot_modulo_auditoria(
+    total_m5_3a_tentativas = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1209,12 +1275,12 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_3a_triagem_subregioes"] = auditoria_por_modulo.get("m5_3a_triagem_subregioes", 0) + total_m5_3a_tentativas
     auditoria_por_snapshot["m5_3a_tentativas"] = auditoria_por_snapshot.get("m5_3a_tentativas", 0) + total_m5_3a_tentativas
-    print(f"[AUDITORIA FLAT] snapshot=m5_3a_tentativas linhas={total_m5_3a_tentativas}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_3a_tentativas linhas={total_m5_3a_tentativas}")
 
     if not PIPELINE_FLAGS["executar_m5_3b"]:
         tempo_total = _duracao_ms(inicio_total)
         metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
-        print(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
+        _print_log(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
         return {
             "status": "ok",
             "mensagem": "Execução encerrada propositalmente após o M5.3A para auditoria operacional desta etapa.",
@@ -1279,7 +1345,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     m5_3b_habilitado = PIPELINE_FLAGS["executar_m5_3b"]
     m5_3b_tem_saldo = isinstance(df_saldo_elegivel_composicao_m5_3, pd.DataFrame) and not df_saldo_elegivel_composicao_m5_3.empty
     m5_3b_tem_perfis = isinstance(df_perfis_elegiveis_por_subregiao_m5_3, pd.DataFrame) and not df_perfis_elegiveis_por_subregiao_m5_3.empty
-    print(f"[M5.3B] executando M5.3B com saldo elegivel linhas={_safe_len(df_saldo_elegivel_composicao_m5_3)}")
+    _print_log(f"[M5.3B] executando M5.3B com saldo elegivel linhas={_safe_len(df_saldo_elegivel_composicao_m5_3)}")
     if m5_3b_habilitado and m5_3b_tem_saldo and m5_3b_tem_perfis:
         outputs_m5_3b, meta_m5_3b = executar_m5_3_composicao_subregioes(
             df_saldo_elegivel_composicao_m5_3=df_saldo_elegivel_composicao_m5_3,
@@ -1317,16 +1383,16 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     df_blocos_cliente_subregiao_m5_3 = outputs_m5_3b.get("df_blocos_cliente_subregiao_m5_3", pd.DataFrame())
     df_manifestos_m5_3 = outputs_m5_3b.get("df_manifestos_m5_3", df_premanifestos_m5_3)
     df_itens_manifestos_m5_3 = outputs_m5_3b.get("df_itens_manifestos_m5_3", df_itens_premanifestos_m5_3)
-    print(f"[M5.3B] df_premanifestos_m5_3 linhas={_safe_len(df_premanifestos_m5_3)}")
-    print(f"[M5.3B] df_itens_premanifestos_m5_3 linhas={_safe_len(df_itens_premanifestos_m5_3)}")
-    print(f"[M5.3B] df_remanescente_m5_3 linhas={_safe_len(df_remanescente_m5_3)}")
-    print(f"[M5.3B] df_tentativas_m5_3 linhas={_safe_len(df_tentativas_m5_3)}")
-    print(f"[M5.3] df_pool_subregiao_m5_3 linhas={_safe_len(df_pool_subregiao_m5_3)}")
-    print(f"[M5.3] df_blocos_cliente_subregiao_m5_3 linhas={_safe_len(df_blocos_cliente_subregiao_m5_3)}")
-    print(f"[M5.3] df_tentativas_m5_3 linhas={_safe_len(df_tentativas_m5_3)}")
-    print(f"[M5.3] df_manifestos_m5_3 linhas={_safe_len(df_manifestos_m5_3)}")
-    print(f"[M5.3] df_itens_manifestos_m5_3 linhas={_safe_len(df_itens_manifestos_m5_3)}")
-    print(f"[M5.3] df_remanescente_m5_3 linhas={_safe_len(df_remanescente_m5_3)}")
+    _print_log(f"[M5.3B] df_premanifestos_m5_3 linhas={_safe_len(df_premanifestos_m5_3)}")
+    _print_log(f"[M5.3B] df_itens_premanifestos_m5_3 linhas={_safe_len(df_itens_premanifestos_m5_3)}")
+    _print_log(f"[M5.3B] df_remanescente_m5_3 linhas={_safe_len(df_remanescente_m5_3)}")
+    _print_log(f"[M5.3B] df_tentativas_m5_3 linhas={_safe_len(df_tentativas_m5_3)}")
+    _print_log(f"[M5.3] df_pool_subregiao_m5_3 linhas={_safe_len(df_pool_subregiao_m5_3)}")
+    _print_log(f"[M5.3] df_blocos_cliente_subregiao_m5_3 linhas={_safe_len(df_blocos_cliente_subregiao_m5_3)}")
+    _print_log(f"[M5.3] df_tentativas_m5_3 linhas={_safe_len(df_tentativas_m5_3)}")
+    _print_log(f"[M5.3] df_manifestos_m5_3 linhas={_safe_len(df_manifestos_m5_3)}")
+    _print_log(f"[M5.3] df_itens_manifestos_m5_3 linhas={_safe_len(df_itens_manifestos_m5_3)}")
+    _print_log(f"[M5.3] df_remanescente_m5_3 linhas={_safe_len(df_remanescente_m5_3)}")
 
     logs.append(
         _log(
@@ -1343,7 +1409,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             },
         )
     )
-    total_m5_3_pool_subregiao = persistir_snapshot_modulo_auditoria(
+    total_m5_3_pool_subregiao = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1356,9 +1422,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_3b_composicao_subregioes"] = auditoria_por_modulo.get("m5_3b_composicao_subregioes", 0) + total_m5_3_pool_subregiao
     auditoria_por_snapshot["m5_3_pool_subregiao"] = auditoria_por_snapshot.get("m5_3_pool_subregiao", 0) + total_m5_3_pool_subregiao
-    print(f"[AUDITORIA FLAT] snapshot=m5_3_pool_subregiao linhas={total_m5_3_pool_subregiao}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_3_pool_subregiao linhas={total_m5_3_pool_subregiao}")
 
-    total_m5_3_blocos_cliente = persistir_snapshot_modulo_auditoria(
+    total_m5_3_blocos_cliente = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1371,9 +1437,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_3b_composicao_subregioes"] = auditoria_por_modulo.get("m5_3b_composicao_subregioes", 0) + total_m5_3_blocos_cliente
     auditoria_por_snapshot["m5_3_blocos_cliente"] = auditoria_por_snapshot.get("m5_3_blocos_cliente", 0) + total_m5_3_blocos_cliente
-    print(f"[AUDITORIA FLAT] snapshot=m5_3_blocos_cliente linhas={total_m5_3_blocos_cliente}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_3_blocos_cliente linhas={total_m5_3_blocos_cliente}")
 
-    total_m5_3_tentativas = persistir_snapshot_modulo_auditoria(
+    total_m5_3_tentativas = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1386,9 +1452,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_3b_composicao_subregioes"] = auditoria_por_modulo.get("m5_3b_composicao_subregioes", 0) + total_m5_3_tentativas
     auditoria_por_snapshot["m5_3_tentativas"] = auditoria_por_snapshot.get("m5_3_tentativas", 0) + total_m5_3_tentativas
-    print(f"[AUDITORIA FLAT] snapshot=m5_3_tentativas linhas={total_m5_3_tentativas}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_3_tentativas linhas={total_m5_3_tentativas}")
 
-    total_m5_3_manifestos = persistir_snapshot_modulo_auditoria(
+    total_m5_3_manifestos = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1401,9 +1467,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_3b_composicao_subregioes"] = auditoria_por_modulo.get("m5_3b_composicao_subregioes", 0) + total_m5_3_manifestos
     auditoria_por_snapshot["m5_3_manifestos"] = auditoria_por_snapshot.get("m5_3_manifestos", 0) + total_m5_3_manifestos
-    print(f"[AUDITORIA FLAT] snapshot=m5_3_manifestos linhas={total_m5_3_manifestos}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_3_manifestos linhas={total_m5_3_manifestos}")
 
-    total_m5_3_itens_manifestados = persistir_snapshot_modulo_auditoria(
+    total_m5_3_itens_manifestados = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1416,9 +1482,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_3b_composicao_subregioes"] = auditoria_por_modulo.get("m5_3b_composicao_subregioes", 0) + total_m5_3_itens_manifestados
     auditoria_por_snapshot["m5_3_itens_manifestados"] = auditoria_por_snapshot.get("m5_3_itens_manifestados", 0) + total_m5_3_itens_manifestados
-    print(f"[AUDITORIA FLAT] snapshot=m5_3_itens_manifestados linhas={total_m5_3_itens_manifestados}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_3_itens_manifestados linhas={total_m5_3_itens_manifestados}")
 
-    total_m5_3_remanescente = persistir_snapshot_modulo_auditoria(
+    total_m5_3_remanescente = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1431,18 +1497,18 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_3b_composicao_subregioes"] = auditoria_por_modulo.get("m5_3b_composicao_subregioes", 0) + total_m5_3_remanescente
     auditoria_por_snapshot["m5_3_remanescente"] = auditoria_por_snapshot.get("m5_3_remanescente", 0) + total_m5_3_remanescente
-    print(f"[AUDITORIA FLAT] snapshot=m5_3_remanescente linhas={total_m5_3_remanescente}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_3_remanescente linhas={total_m5_3_remanescente}")
 
     df_remanescente_global_ate_m5_3 = _consolidar_remanescente_global(
         df_saldo_nao_elegivel_m5_3,
         df_remanescente_m5_3,
     )
-    print(f"[M5.3B] df_remanescente_global_ate_m5_3 linhas={_safe_len(df_remanescente_global_ate_m5_3)}")
+    _print_log(f"[M5.3B] df_remanescente_global_ate_m5_3 linhas={_safe_len(df_remanescente_global_ate_m5_3)}")
 
     if not PIPELINE_FLAGS["executar_m5_4a"]:
         tempo_total = _duracao_ms(inicio_total)
         metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
-        print(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
+        _print_log(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
         return {
             "status": "ok",
             "mensagem": "Execução encerrada propositalmente após o M5.3B para auditoria operacional desta etapa.",
@@ -1501,7 +1567,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # M5.4A
     # =========================================================================================
     t0 = _agora()
-    print(
+    _print_log(
         "[M5.4A] executando M5.4A com remanescente global ate M5.3 "
         f"linhas={_safe_len(df_remanescente_global_ate_m5_3)}"
     )
@@ -1522,12 +1588,12 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     df_saldo_nao_elegivel_m5_4 = outputs_m5_4a["df_saldo_nao_elegivel_m5_4"]
     df_tentativas_triagem_mesorregioes_m5_4 = outputs_m5_4a["df_tentativas_triagem_mesorregioes_m5_4"]
 
-    print(f"[M5.4A] df_mesorregioes_consolidadas_m5_4 linhas={_safe_len(df_mesorregioes_consolidadas_m5_4)}")
-    print(f"[M5.4A] df_perfis_elegiveis_por_mesorregiao_m5_4 linhas={_safe_len(df_perfis_elegiveis_por_mesorregiao_m5_4)}")
-    print(f"[M5.4A] df_perfis_descartados_por_mesorregiao_m5_4 linhas={_safe_len(df_perfis_descartados_por_mesorregiao_m5_4)}")
-    print(f"[M5.4A] df_saldo_elegivel_composicao_m5_4 linhas={_safe_len(df_saldo_elegivel_composicao_m5_4)}")
-    print(f"[M5.4A] df_saldo_nao_elegivel_m5_4 linhas={_safe_len(df_saldo_nao_elegivel_m5_4)}")
-    print(f"[M5.4A] df_tentativas_triagem_mesorregioes_m5_4 linhas={_safe_len(df_tentativas_triagem_mesorregioes_m5_4)}")
+    _print_log(f"[M5.4A] df_mesorregioes_consolidadas_m5_4 linhas={_safe_len(df_mesorregioes_consolidadas_m5_4)}")
+    _print_log(f"[M5.4A] df_perfis_elegiveis_por_mesorregiao_m5_4 linhas={_safe_len(df_perfis_elegiveis_por_mesorregiao_m5_4)}")
+    _print_log(f"[M5.4A] df_perfis_descartados_por_mesorregiao_m5_4 linhas={_safe_len(df_perfis_descartados_por_mesorregiao_m5_4)}")
+    _print_log(f"[M5.4A] df_saldo_elegivel_composicao_m5_4 linhas={_safe_len(df_saldo_elegivel_composicao_m5_4)}")
+    _print_log(f"[M5.4A] df_saldo_nao_elegivel_m5_4 linhas={_safe_len(df_saldo_nao_elegivel_m5_4)}")
+    _print_log(f"[M5.4A] df_tentativas_triagem_mesorregioes_m5_4 linhas={_safe_len(df_tentativas_triagem_mesorregioes_m5_4)}")
 
     logs.append(
         _log(
@@ -1550,7 +1616,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         )
     )
 
-    total_m5_4a_mesorregioes_consolidadas = persistir_snapshot_modulo_auditoria(
+    total_m5_4a_mesorregioes_consolidadas = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1563,9 +1629,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_4a_triagem_mesorregioes"] = auditoria_por_modulo.get("m5_4a_triagem_mesorregioes", 0) + total_m5_4a_mesorregioes_consolidadas
     auditoria_por_snapshot["m5_4a_mesorregioes_consolidadas"] = auditoria_por_snapshot.get("m5_4a_mesorregioes_consolidadas", 0) + total_m5_4a_mesorregioes_consolidadas
-    print(f"[AUDITORIA FLAT] snapshot=m5_4a_mesorregioes_consolidadas linhas={total_m5_4a_mesorregioes_consolidadas}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_4a_mesorregioes_consolidadas linhas={total_m5_4a_mesorregioes_consolidadas}")
 
-    total_m5_4a_perfis_viaveis = persistir_snapshot_modulo_auditoria(
+    total_m5_4a_perfis_viaveis = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1578,9 +1644,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_4a_triagem_mesorregioes"] = auditoria_por_modulo.get("m5_4a_triagem_mesorregioes", 0) + total_m5_4a_perfis_viaveis
     auditoria_por_snapshot["m5_4a_perfis_viaveis"] = auditoria_por_snapshot.get("m5_4a_perfis_viaveis", 0) + total_m5_4a_perfis_viaveis
-    print(f"[AUDITORIA FLAT] snapshot=m5_4a_perfis_viaveis linhas={total_m5_4a_perfis_viaveis}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_4a_perfis_viaveis linhas={total_m5_4a_perfis_viaveis}")
 
-    total_m5_4a_perfis_elegiveis = persistir_snapshot_modulo_auditoria(
+    total_m5_4a_perfis_elegiveis = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1593,9 +1659,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_4a_triagem_mesorregioes"] = auditoria_por_modulo.get("m5_4a_triagem_mesorregioes", 0) + total_m5_4a_perfis_elegiveis
     auditoria_por_snapshot["m5_4a_perfis_elegiveis"] = auditoria_por_snapshot.get("m5_4a_perfis_elegiveis", 0) + total_m5_4a_perfis_elegiveis
-    print(f"[AUDITORIA FLAT] snapshot=m5_4a_perfis_elegiveis linhas={total_m5_4a_perfis_elegiveis}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_4a_perfis_elegiveis linhas={total_m5_4a_perfis_elegiveis}")
 
-    total_m5_4a_perfis_descartados = persistir_snapshot_modulo_auditoria(
+    total_m5_4a_perfis_descartados = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1608,9 +1674,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_4a_triagem_mesorregioes"] = auditoria_por_modulo.get("m5_4a_triagem_mesorregioes", 0) + total_m5_4a_perfis_descartados
     auditoria_por_snapshot["m5_4a_perfis_descartados"] = auditoria_por_snapshot.get("m5_4a_perfis_descartados", 0) + total_m5_4a_perfis_descartados
-    print(f"[AUDITORIA FLAT] snapshot=m5_4a_perfis_descartados linhas={total_m5_4a_perfis_descartados}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_4a_perfis_descartados linhas={total_m5_4a_perfis_descartados}")
 
-    total_m5_4a_saldo_elegivel = persistir_snapshot_modulo_auditoria(
+    total_m5_4a_saldo_elegivel = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1623,9 +1689,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_4a_triagem_mesorregioes"] = auditoria_por_modulo.get("m5_4a_triagem_mesorregioes", 0) + total_m5_4a_saldo_elegivel
     auditoria_por_snapshot["m5_4a_saldo_elegivel"] = auditoria_por_snapshot.get("m5_4a_saldo_elegivel", 0) + total_m5_4a_saldo_elegivel
-    print(f"[AUDITORIA FLAT] snapshot=m5_4a_saldo_elegivel linhas={total_m5_4a_saldo_elegivel}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_4a_saldo_elegivel linhas={total_m5_4a_saldo_elegivel}")
 
-    total_m5_4a_saldo_nao_elegivel = persistir_snapshot_modulo_auditoria(
+    total_m5_4a_saldo_nao_elegivel = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1638,9 +1704,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_4a_triagem_mesorregioes"] = auditoria_por_modulo.get("m5_4a_triagem_mesorregioes", 0) + total_m5_4a_saldo_nao_elegivel
     auditoria_por_snapshot["m5_4a_saldo_nao_elegivel"] = auditoria_por_snapshot.get("m5_4a_saldo_nao_elegivel", 0) + total_m5_4a_saldo_nao_elegivel
-    print(f"[AUDITORIA FLAT] snapshot=m5_4a_saldo_nao_elegivel linhas={total_m5_4a_saldo_nao_elegivel}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_4a_saldo_nao_elegivel linhas={total_m5_4a_saldo_nao_elegivel}")
 
-    total_m5_4a_tentativas = persistir_snapshot_modulo_auditoria(
+    total_m5_4a_tentativas = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1653,12 +1719,12 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_4a_triagem_mesorregioes"] = auditoria_por_modulo.get("m5_4a_triagem_mesorregioes", 0) + total_m5_4a_tentativas
     auditoria_por_snapshot["m5_4a_tentativas"] = auditoria_por_snapshot.get("m5_4a_tentativas", 0) + total_m5_4a_tentativas
-    print(f"[AUDITORIA FLAT] snapshot=m5_4a_tentativas linhas={total_m5_4a_tentativas}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_4a_tentativas linhas={total_m5_4a_tentativas}")
 
     if not PIPELINE_FLAGS["executar_m5_4b"]:
         tempo_total = _duracao_ms(inicio_total)
         metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
-        print(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
+        _print_log(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
         return {
             "status": "ok",
             "mensagem": "Execucao encerrada propositalmente apos o M5.4A para auditoria operacional desta etapa.",
@@ -1721,7 +1787,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # M5.4B
     # =========================================================================================
     t0 = _agora()
-    print(f"[M5.4B] executando M5.4B com saldo elegível linhas={_safe_len(df_saldo_elegivel_composicao_m5_4)}")
+    _print_log(f"[M5.4B] executando M5.4B com saldo elegível linhas={_safe_len(df_saldo_elegivel_composicao_m5_4)}")
     m5_4b_tem_saldo = isinstance(df_saldo_elegivel_composicao_m5_4, pd.DataFrame) and not df_saldo_elegivel_composicao_m5_4.empty
     m5_4b_tem_perfis = isinstance(df_perfis_elegiveis_por_mesorregiao_m5_4, pd.DataFrame) and not df_perfis_elegiveis_por_mesorregiao_m5_4.empty
     if m5_4b_tem_saldo and m5_4b_tem_perfis:
@@ -1767,17 +1833,17 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             df_itens_premanifestos_m5_4["manifesto_id"].astype(str).str.replace("PM53_", "PM54_", regex=False)
         )
 
-    print(f"[M5.4] df_pool_mesorregiao_m5_4 linhas={_safe_len(df_pool_mesorregiao_m5_4)}")
-    print(f"[M5.4] df_blocos_cliente_mesorregiao_m5_4 linhas={_safe_len(df_blocos_cliente_mesorregiao_m5_4)}")
-    print(f"[M5.4] df_tentativas_m5_4 linhas={_safe_len(df_tentativas_m5_4)}")
-    print(f"[M5.4] df_manifestos_m5_4 linhas={_safe_len(df_manifestos_m5_4)}")
-    print(f"[M5.4] df_itens_manifestos_m5_4 linhas={_safe_len(df_itens_manifestos_m5_4)}")
-    print(f"[M5.4] df_remanescente_m5_4 linhas={_safe_len(df_remanescente_m5_4)}")
+    _print_log(f"[M5.4] df_pool_mesorregiao_m5_4 linhas={_safe_len(df_pool_mesorregiao_m5_4)}")
+    _print_log(f"[M5.4] df_blocos_cliente_mesorregiao_m5_4 linhas={_safe_len(df_blocos_cliente_mesorregiao_m5_4)}")
+    _print_log(f"[M5.4] df_tentativas_m5_4 linhas={_safe_len(df_tentativas_m5_4)}")
+    _print_log(f"[M5.4] df_manifestos_m5_4 linhas={_safe_len(df_manifestos_m5_4)}")
+    _print_log(f"[M5.4] df_itens_manifestos_m5_4 linhas={_safe_len(df_itens_manifestos_m5_4)}")
+    _print_log(f"[M5.4] df_remanescente_m5_4 linhas={_safe_len(df_remanescente_m5_4)}")
     df_remanescente_global_final_roteirizacao = _consolidar_remanescente_global(
         df_saldo_nao_elegivel_m5_4,
         df_remanescente_m5_4,
     )
-    print(
+    _print_log(
         "[M5.4B] df_remanescente_global_final_roteirizacao "
         f"linhas={_safe_len(df_remanescente_global_final_roteirizacao)}"
     )
@@ -1799,7 +1865,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         )
     )
 
-    total_m5_4_pool_mesorregiao = persistir_snapshot_modulo_auditoria(
+    total_m5_4_pool_mesorregiao = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1812,9 +1878,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_4b_composicao_mesorregioes"] = auditoria_por_modulo.get("m5_4b_composicao_mesorregioes", 0) + total_m5_4_pool_mesorregiao
     auditoria_por_snapshot["m5_4_pool_mesorregiao"] = auditoria_por_snapshot.get("m5_4_pool_mesorregiao", 0) + total_m5_4_pool_mesorregiao
-    print(f"[AUDITORIA FLAT] snapshot=m5_4_pool_mesorregiao linhas={total_m5_4_pool_mesorregiao}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_4_pool_mesorregiao linhas={total_m5_4_pool_mesorregiao}")
 
-    total_m5_4_blocos_cliente = persistir_snapshot_modulo_auditoria(
+    total_m5_4_blocos_cliente = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1827,9 +1893,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_4b_composicao_mesorregioes"] = auditoria_por_modulo.get("m5_4b_composicao_mesorregioes", 0) + total_m5_4_blocos_cliente
     auditoria_por_snapshot["m5_4_blocos_cliente"] = auditoria_por_snapshot.get("m5_4_blocos_cliente", 0) + total_m5_4_blocos_cliente
-    print(f"[AUDITORIA FLAT] snapshot=m5_4_blocos_cliente linhas={total_m5_4_blocos_cliente}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_4_blocos_cliente linhas={total_m5_4_blocos_cliente}")
 
-    total_m5_4_tentativas = persistir_snapshot_modulo_auditoria(
+    total_m5_4_tentativas = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1842,9 +1908,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_4b_composicao_mesorregioes"] = auditoria_por_modulo.get("m5_4b_composicao_mesorregioes", 0) + total_m5_4_tentativas
     auditoria_por_snapshot["m5_4_tentativas"] = auditoria_por_snapshot.get("m5_4_tentativas", 0) + total_m5_4_tentativas
-    print(f"[AUDITORIA FLAT] snapshot=m5_4_tentativas linhas={total_m5_4_tentativas}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_4_tentativas linhas={total_m5_4_tentativas}")
 
-    total_m5_4_manifestos = persistir_snapshot_modulo_auditoria(
+    total_m5_4_manifestos = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1857,9 +1923,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_4b_composicao_mesorregioes"] = auditoria_por_modulo.get("m5_4b_composicao_mesorregioes", 0) + total_m5_4_manifestos
     auditoria_por_snapshot["m5_4_manifestos"] = auditoria_por_snapshot.get("m5_4_manifestos", 0) + total_m5_4_manifestos
-    print(f"[AUDITORIA FLAT] snapshot=m5_4_manifestos linhas={total_m5_4_manifestos}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_4_manifestos linhas={total_m5_4_manifestos}")
 
-    total_m5_4_itens_manifestados = persistir_snapshot_modulo_auditoria(
+    total_m5_4_itens_manifestados = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1872,9 +1938,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_4b_composicao_mesorregioes"] = auditoria_por_modulo.get("m5_4b_composicao_mesorregioes", 0) + total_m5_4_itens_manifestados
     auditoria_por_snapshot["m5_4_itens_manifestados"] = auditoria_por_snapshot.get("m5_4_itens_manifestados", 0) + total_m5_4_itens_manifestados
-    print(f"[AUDITORIA FLAT] snapshot=m5_4_itens_manifestados linhas={total_m5_4_itens_manifestados}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_4_itens_manifestados linhas={total_m5_4_itens_manifestados}")
 
-    total_m5_4_remanescente = persistir_snapshot_modulo_auditoria(
+    total_m5_4_remanescente = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -1887,12 +1953,12 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m5_4b_composicao_mesorregioes"] = auditoria_por_modulo.get("m5_4b_composicao_mesorregioes", 0) + total_m5_4_remanescente
     auditoria_por_snapshot["m5_4_remanescente"] = auditoria_por_snapshot.get("m5_4_remanescente", 0) + total_m5_4_remanescente
-    print(f"[AUDITORIA FLAT] snapshot=m5_4_remanescente linhas={total_m5_4_remanescente}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m5_4_remanescente linhas={total_m5_4_remanescente}")
 
     if not PIPELINE_FLAGS["executar_m6_1"]:
         tempo_total = _duracao_ms(inicio_total)
         metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
-        print(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
+        _print_log(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
         return {
             "status": "ok",
             "mensagem": "Execução encerrada propositalmente após o M5.4B para auditoria operacional desta etapa.",
@@ -1968,15 +2034,15 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     df_itens_premanifestos_m5_3_m6_1 = _copiar_ou_vazio(df_itens_premanifestos_m5_3)
     df_premanifestos_m5_4_m6_1 = _copiar_ou_vazio(df_premanifestos_m5_4)
     df_itens_premanifestos_m5_4_m6_1 = _copiar_ou_vazio(df_itens_premanifestos_m5_4)
-    print("[M6.1] executando M6.1 com:")
-    print(f"[M6.1] df_manifestos_m4 linhas={_safe_len(df_manifestos_m4_m6_1)}")
-    print(f"[M6.1] df_itens_manifestados_m4 linhas={_safe_len(df_itens_manifestados_m4_m6_1)}")
-    print(f"[M6.1] df_premanifestos_m5_2 linhas={_safe_len(df_premanifestos_m5_2_m6_1)}")
-    print(f"[M6.1] df_itens_premanifestos_m5_2 linhas={_safe_len(df_itens_premanifestos_m5_2_m6_1)}")
-    print(f"[M6.1] df_premanifestos_m5_3 linhas={_safe_len(df_premanifestos_m5_3_m6_1)}")
-    print(f"[M6.1] df_itens_premanifestos_m5_3 linhas={_safe_len(df_itens_premanifestos_m5_3_m6_1)}")
-    print(f"[M6.1] df_premanifestos_m5_4 linhas={_safe_len(df_premanifestos_m5_4_m6_1)}")
-    print(f"[M6.1] df_itens_premanifestos_m5_4 linhas={_safe_len(df_itens_premanifestos_m5_4_m6_1)}")
+    _print_log("[M6.1] executando M6.1 com:")
+    _print_log(f"[M6.1] df_manifestos_m4 linhas={_safe_len(df_manifestos_m4_m6_1)}")
+    _print_log(f"[M6.1] df_itens_manifestados_m4 linhas={_safe_len(df_itens_manifestados_m4_m6_1)}")
+    _print_log(f"[M6.1] df_premanifestos_m5_2 linhas={_safe_len(df_premanifestos_m5_2_m6_1)}")
+    _print_log(f"[M6.1] df_itens_premanifestos_m5_2 linhas={_safe_len(df_itens_premanifestos_m5_2_m6_1)}")
+    _print_log(f"[M6.1] df_premanifestos_m5_3 linhas={_safe_len(df_premanifestos_m5_3_m6_1)}")
+    _print_log(f"[M6.1] df_itens_premanifestos_m5_3 linhas={_safe_len(df_itens_premanifestos_m5_3_m6_1)}")
+    _print_log(f"[M6.1] df_premanifestos_m5_4 linhas={_safe_len(df_premanifestos_m5_4_m6_1)}")
+    _print_log(f"[M6.1] df_itens_premanifestos_m5_4 linhas={_safe_len(df_itens_premanifestos_m5_4_m6_1)}")
     t0 = _agora()
     outputs_m6_1, meta_m6_1 = executar_m6_1_consolidacao_manifestos(
         df_manifestos_m4=df_manifestos_m4_m6_1,
@@ -1999,10 +2065,10 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     df_itens_manifestos_base_m6 = outputs_m6_1["df_itens_manifestos_base_m6"]
     df_estatisticas_manifestos_antes_m6 = outputs_m6_1["df_estatisticas_manifestos_antes_m6"]
     df_pares_elegiveis_otimizacao_m6 = outputs_m6_1["df_pares_elegiveis_otimizacao_m6"]
-    print(f"[M6.1] df_manifestos_base_m6 linhas={_safe_len(df_manifestos_base_m6)}")
-    print(f"[M6.1] df_itens_manifestos_base_m6 linhas={_safe_len(df_itens_manifestos_base_m6)}")
-    print(f"[M6.1] df_estatisticas_manifestos_antes_m6 linhas={_safe_len(df_estatisticas_manifestos_antes_m6)}")
-    print(f"[M6.1] df_pares_elegiveis_otimizacao_m6 linhas={_safe_len(df_pares_elegiveis_otimizacao_m6)}")
+    _print_log(f"[M6.1] df_manifestos_base_m6 linhas={_safe_len(df_manifestos_base_m6)}")
+    _print_log(f"[M6.1] df_itens_manifestos_base_m6 linhas={_safe_len(df_itens_manifestos_base_m6)}")
+    _print_log(f"[M6.1] df_estatisticas_manifestos_antes_m6 linhas={_safe_len(df_estatisticas_manifestos_antes_m6)}")
+    _print_log(f"[M6.1] df_pares_elegiveis_otimizacao_m6 linhas={_safe_len(df_pares_elegiveis_otimizacao_m6)}")
 
     logs.append(
         _log(
@@ -2026,7 +2092,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         )
     )
 
-    total_m6_1_manifestos_base = persistir_snapshot_modulo_auditoria(
+    total_m6_1_manifestos_base = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -2039,9 +2105,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m6_1_consolidacao_manifestos"] = auditoria_por_modulo.get("m6_1_consolidacao_manifestos", 0) + total_m6_1_manifestos_base
     auditoria_por_snapshot["m6_1_manifestos_base"] = auditoria_por_snapshot.get("m6_1_manifestos_base", 0) + total_m6_1_manifestos_base
-    print(f"[AUDITORIA FLAT] snapshot=m6_1_manifestos_base linhas={total_m6_1_manifestos_base}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m6_1_manifestos_base linhas={total_m6_1_manifestos_base}")
 
-    total_m6_1_itens_manifestos_base = persistir_snapshot_modulo_auditoria(
+    total_m6_1_itens_manifestos_base = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -2054,9 +2120,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m6_1_consolidacao_manifestos"] = auditoria_por_modulo.get("m6_1_consolidacao_manifestos", 0) + total_m6_1_itens_manifestos_base
     auditoria_por_snapshot["m6_1_itens_manifestos_base"] = auditoria_por_snapshot.get("m6_1_itens_manifestos_base", 0) + total_m6_1_itens_manifestos_base
-    print(f"[AUDITORIA FLAT] snapshot=m6_1_itens_manifestos_base linhas={total_m6_1_itens_manifestos_base}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m6_1_itens_manifestos_base linhas={total_m6_1_itens_manifestos_base}")
 
-    total_m6_1_estatisticas = persistir_snapshot_modulo_auditoria(
+    total_m6_1_estatisticas = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -2069,9 +2135,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m6_1_consolidacao_manifestos"] = auditoria_por_modulo.get("m6_1_consolidacao_manifestos", 0) + total_m6_1_estatisticas
     auditoria_por_snapshot["m6_1_estatisticas_manifestos"] = auditoria_por_snapshot.get("m6_1_estatisticas_manifestos", 0) + total_m6_1_estatisticas
-    print(f"[AUDITORIA FLAT] snapshot=m6_1_estatisticas_manifestos linhas={total_m6_1_estatisticas}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m6_1_estatisticas_manifestos linhas={total_m6_1_estatisticas}")
 
-    total_m6_1_pares = persistir_snapshot_modulo_auditoria(
+    total_m6_1_pares = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -2084,12 +2150,12 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m6_1_consolidacao_manifestos"] = auditoria_por_modulo.get("m6_1_consolidacao_manifestos", 0) + total_m6_1_pares
     auditoria_por_snapshot["m6_1_pares_elegiveis_otimizacao"] = auditoria_por_snapshot.get("m6_1_pares_elegiveis_otimizacao", 0) + total_m6_1_pares
-    print(f"[AUDITORIA FLAT] snapshot=m6_1_pares_elegiveis_otimizacao linhas={total_m6_1_pares}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m6_1_pares_elegiveis_otimizacao linhas={total_m6_1_pares}")
 
     if not PIPELINE_FLAGS["executar_m6_2"]:
         tempo_total = _duracao_ms(inicio_total)
         metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
-        print(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
+        _print_log(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
         return {
             "status": "ok",
             "mensagem": "Execucao encerrada propositalmente apos o M6.1 para auditoria da consolidacao de manifestos.",
@@ -2167,11 +2233,11 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     df_itens_manifestos_base_m6_input = _copiar_ou_vazio(df_itens_manifestos_base_m6)
     df_remanescente_global_final_roteirizacao_input = _copiar_ou_vazio(df_remanescente_global_final_roteirizacao)
 
-    print("[M6.2] executando M6.2 com:")
-    print(f"[M6.2] df_manifestos_base_m6 linhas={_safe_len(df_manifestos_base_m6_input)}")
-    print(f"[M6.2] df_estatisticas_manifestos_antes_m6 linhas={_safe_len(df_estatisticas_manifestos_antes_m6_input)}")
-    print(f"[M6.2] df_itens_manifestos_base_m6 linhas={_safe_len(df_itens_manifestos_base_m6_input)}")
-    print(f"[M6.2] df_remanescente_global_final_roteirizacao linhas={_safe_len(df_remanescente_global_final_roteirizacao_input)}")
+    _print_log("[M6.2] executando M6.2 com:")
+    _print_log(f"[M6.2] df_manifestos_base_m6 linhas={_safe_len(df_manifestos_base_m6_input)}")
+    _print_log(f"[M6.2] df_estatisticas_manifestos_antes_m6 linhas={_safe_len(df_estatisticas_manifestos_antes_m6_input)}")
+    _print_log(f"[M6.2] df_itens_manifestos_base_m6 linhas={_safe_len(df_itens_manifestos_base_m6_input)}")
+    _print_log(f"[M6.2] df_remanescente_global_final_roteirizacao linhas={_safe_len(df_remanescente_global_final_roteirizacao_input)}")
 
     t0 = _agora()
     manifesto_schema_valido = _tem_schema_minimo(df_manifestos_base_m6_input, COLS_MANIFESTOS_OBRIGATORIAS)
@@ -2242,12 +2308,12 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     df_remanescente_m5_original_m6_2 = outputs_m6_2["df_remanescente_m5_original_m6_2"]
     df_tentativas_m6_2 = outputs_m6_2["df_tentativas_m6_2"]
     df_movimentos_aceitos_m6_2 = outputs_m6_2["df_movimentos_aceitos_m6_2"]
-    print(f"[M6.2] df_manifestos_m6_2 linhas={_safe_len(df_manifestos_m6_2)}")
-    print(f"[M6.2] df_itens_manifestos_m6_2 linhas={_safe_len(df_itens_manifestos_m6_2)}")
-    print(f"[M6.2] df_remanescente_m6_2 linhas={_safe_len(df_remanescente_m6_2)}")
-    print(f"[M6.2] df_remanescente_m5_original_m6_2 linhas={_safe_len(df_remanescente_m5_original_m6_2)}")
-    print(f"[M6.2] df_tentativas_m6_2 linhas={_safe_len(df_tentativas_m6_2)}")
-    print(f"[M6.2] df_movimentos_aceitos_m6_2 linhas={_safe_len(df_movimentos_aceitos_m6_2)}")
+    _print_log(f"[M6.2] df_manifestos_m6_2 linhas={_safe_len(df_manifestos_m6_2)}")
+    _print_log(f"[M6.2] df_itens_manifestos_m6_2 linhas={_safe_len(df_itens_manifestos_m6_2)}", force=not log_verbose)
+    _print_log(f"[M6.2] df_remanescente_m6_2 linhas={_safe_len(df_remanescente_m6_2)}")
+    _print_log(f"[M6.2] df_remanescente_m5_original_m6_2 linhas={_safe_len(df_remanescente_m5_original_m6_2)}")
+    _print_log(f"[M6.2] df_tentativas_m6_2 linhas={_safe_len(df_tentativas_m6_2)}")
+    _print_log(f"[M6.2] df_movimentos_aceitos_m6_2 linhas={_safe_len(df_movimentos_aceitos_m6_2)}")
 
     logs.append(
         _log(
@@ -2272,7 +2338,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         )
     )
 
-    total_m6_2_manifestos = persistir_snapshot_modulo_auditoria(
+    total_m6_2_manifestos = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -2285,9 +2351,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m6_2_complemento_ocupacao"] = auditoria_por_modulo.get("m6_2_complemento_ocupacao", 0) + total_m6_2_manifestos
     auditoria_por_snapshot["m6_2_manifestos"] = auditoria_por_snapshot.get("m6_2_manifestos", 0) + total_m6_2_manifestos
-    print(f"[AUDITORIA FLAT] snapshot=m6_2_manifestos linhas={total_m6_2_manifestos}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m6_2_manifestos linhas={total_m6_2_manifestos}")
 
-    total_m6_2_itens_manifestos = persistir_snapshot_modulo_auditoria(
+    total_m6_2_itens_manifestos = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -2300,9 +2366,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m6_2_complemento_ocupacao"] = auditoria_por_modulo.get("m6_2_complemento_ocupacao", 0) + total_m6_2_itens_manifestos
     auditoria_por_snapshot["m6_2_itens_manifestos"] = auditoria_por_snapshot.get("m6_2_itens_manifestos", 0) + total_m6_2_itens_manifestos
-    print(f"[AUDITORIA FLAT] snapshot=m6_2_itens_manifestos linhas={total_m6_2_itens_manifestos}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m6_2_itens_manifestos linhas={total_m6_2_itens_manifestos}")
 
-    total_m6_2_remanescente = persistir_snapshot_modulo_auditoria(
+    total_m6_2_remanescente = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -2315,9 +2381,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m6_2_complemento_ocupacao"] = auditoria_por_modulo.get("m6_2_complemento_ocupacao", 0) + total_m6_2_remanescente
     auditoria_por_snapshot["m6_2_remanescente"] = auditoria_por_snapshot.get("m6_2_remanescente", 0) + total_m6_2_remanescente
-    print(f"[AUDITORIA FLAT] snapshot=m6_2_remanescente linhas={total_m6_2_remanescente}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m6_2_remanescente linhas={total_m6_2_remanescente}")
 
-    total_m6_2_remanescente_original = persistir_snapshot_modulo_auditoria(
+    total_m6_2_remanescente_original = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -2330,9 +2396,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m6_2_complemento_ocupacao"] = auditoria_por_modulo.get("m6_2_complemento_ocupacao", 0) + total_m6_2_remanescente_original
     auditoria_por_snapshot["m6_2_remanescente_original"] = auditoria_por_snapshot.get("m6_2_remanescente_original", 0) + total_m6_2_remanescente_original
-    print(f"[AUDITORIA FLAT] snapshot=m6_2_remanescente_original linhas={total_m6_2_remanescente_original}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m6_2_remanescente_original linhas={total_m6_2_remanescente_original}")
 
-    total_m6_2_tentativas = persistir_snapshot_modulo_auditoria(
+    total_m6_2_tentativas = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -2345,9 +2411,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m6_2_complemento_ocupacao"] = auditoria_por_modulo.get("m6_2_complemento_ocupacao", 0) + total_m6_2_tentativas
     auditoria_por_snapshot["m6_2_tentativas"] = auditoria_por_snapshot.get("m6_2_tentativas", 0) + total_m6_2_tentativas
-    print(f"[AUDITORIA FLAT] snapshot=m6_2_tentativas linhas={total_m6_2_tentativas}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m6_2_tentativas linhas={total_m6_2_tentativas}")
 
-    total_m6_2_movimentos_aceitos = persistir_snapshot_modulo_auditoria(
+    total_m6_2_movimentos_aceitos = _persistir_snapshot_se_ativo(auditoria_ativa, 
         teste_id=teste_id_auditoria,
         rodada_id=contexto.rodada_id,
         upload_id=contexto.upload_id,
@@ -2360,12 +2426,12 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     )
     auditoria_por_modulo["m6_2_complemento_ocupacao"] = auditoria_por_modulo.get("m6_2_complemento_ocupacao", 0) + total_m6_2_movimentos_aceitos
     auditoria_por_snapshot["m6_2_movimentos_aceitos"] = auditoria_por_snapshot.get("m6_2_movimentos_aceitos", 0) + total_m6_2_movimentos_aceitos
-    print(f"[AUDITORIA FLAT] snapshot=m6_2_movimentos_aceitos linhas={total_m6_2_movimentos_aceitos}")
+    _print_log(f"[AUDITORIA FLAT] snapshot=m6_2_movimentos_aceitos linhas={total_m6_2_movimentos_aceitos}")
 
     if not PIPELINE_FLAGS["executar_m7"]:
         tempo_total = _duracao_ms(inicio_total)
         metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
-        print(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
+        _print_log(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
         return {
             "status": "ok",
             "mensagem": "Execução encerrada propositalmente após o M6.2 para auditoria operacional desta etapa.",
@@ -2450,11 +2516,11 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     df_geo_tratado_input_m7 = _copiar_ou_vazio(df_geo_tratado)
     df_geo_raw_input_m7 = _copiar_ou_vazio(contexto.df_geo_raw)
 
-    print("[M7] executando M7 com:")
-    print(f"- df_manifestos_m6_2 linhas={_safe_len(df_manifestos_m6_2_input_m7)}")
-    print(f"- df_itens_manifestos_m6_2 linhas={_safe_len(df_itens_manifestos_m6_2_input_m7)}")
-    print(f"- df_geo_tratado linhas={_safe_len(df_geo_tratado_input_m7)}")
-    print(f"- df_geo_raw linhas={_safe_len(df_geo_raw_input_m7)}")
+    _print_log("[M7] executando M7 com:")
+    _print_log(f"- df_manifestos_m6_2 linhas={_safe_len(df_manifestos_m6_2_input_m7)}")
+    _print_log(f"- df_itens_manifestos_m6_2 linhas={_safe_len(df_itens_manifestos_m6_2_input_m7)}")
+    _print_log(f"- df_geo_tratado linhas={_safe_len(df_geo_tratado_input_m7)}")
+    _print_log(f"- df_geo_raw linhas={_safe_len(df_geo_raw_input_m7)}")
 
     t0 = _agora()
     outputs_m7, meta_m7 = executar_m7_sequenciamento_entregas(
@@ -2474,7 +2540,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         outputs_m7 = {}
 
     output_keys_m7 = sorted(list(outputs_m7.keys()))
-    print(f"[M7] output real recebido: {output_keys_m7}")
+    _print_log(f"[M7] output real recebido: {output_keys_m7}")
 
     resumo_m7 = meta_m7.get("resumo_m7", {}) if isinstance(meta_m7, dict) else {}
     auditoria_m7 = meta_m7.get("auditoria_m7", {}) if isinstance(meta_m7, dict) else {}
@@ -2501,12 +2567,12 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
                 break
 
         if df_snapshot is None:
-            print(f"[M7] snapshot {snapshot_nome} não retornado pelo módulo ativo")
+            _print_log(f"[M7] snapshot {snapshot_nome} não retornado pelo módulo ativo")
             snapshots_m7_df[snapshot_nome] = pd.DataFrame()
             continue
 
         snapshots_m7_df[snapshot_nome] = df_snapshot
-        print(f"[M7] snapshot {snapshot_nome} mapeado da chave {chave_encontrada}")
+        _print_log(f"[M7] snapshot {snapshot_nome} mapeado da chave {chave_encontrada}")
 
     df_manifestos_m7 = snapshots_m7_df["m7_manifestos"]
     df_itens_manifestos_sequenciados_m7 = snapshots_m7_df["m7_itens_sequenciados"]
@@ -2516,13 +2582,13 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     df_tentativas_sequenciamento_m7 = snapshots_m7_df["m7_tentativas"]
     df_diagnostico_recuperacao_coordenadas_m7 = snapshots_m7_df["m7_diagnostico_coordenadas"]
 
-    print(f"[M7] df_manifestos_m7 linhas={_safe_len(df_manifestos_m7)}")
-    print(f"[M7] df_itens_sequenciados_m7 linhas={_safe_len(df_itens_manifestos_sequenciados_m7)}")
-    print(f"[M7] df_paradas_m7 linhas={_safe_len(df_paradas_m7)}")
-    print(f"[M7] df_auditoria_m7 linhas={_safe_len(df_auditoria_m7)}")
-    print(f"[M7] df_resumo_sequenciamento_m7 linhas={_safe_len(df_manifestos_sequenciamento_resumo_m7)}")
-    print(f"[M7] df_tentativas_m7 linhas={_safe_len(df_tentativas_sequenciamento_m7)}")
-    print(f"[M7] df_diagnostico_coordenadas_m7 linhas={_safe_len(df_diagnostico_recuperacao_coordenadas_m7)}")
+    _print_log(f"[M7] df_manifestos_m7 linhas={_safe_len(df_manifestos_m7)}")
+    _print_log(f"[M7] df_itens_sequenciados_m7 linhas={_safe_len(df_itens_manifestos_sequenciados_m7)}")
+    _print_log(f"[M7] df_paradas_m7 linhas={_safe_len(df_paradas_m7)}")
+    _print_log(f"[M7] df_auditoria_m7 linhas={_safe_len(df_auditoria_m7)}")
+    _print_log(f"[M7] df_resumo_sequenciamento_m7 linhas={_safe_len(df_manifestos_sequenciamento_resumo_m7)}")
+    _print_log(f"[M7] df_tentativas_m7 linhas={_safe_len(df_tentativas_sequenciamento_m7)}")
+    _print_log(f"[M7] df_diagnostico_coordenadas_m7 linhas={_safe_len(df_diagnostico_recuperacao_coordenadas_m7)}")
 
     status_log_m7 = "ok" if _safe_len(df_itens_manifestos_m6_2_input_m7) > 0 else "ignorado"
     mensagem_log_m7 = "M7 executado com sucesso" if status_log_m7 == "ok" else "M7 executado com entrada vazia e saída controlada"
@@ -2561,9 +2627,9 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     for snapshot_nome in m7_snapshot_ordem:
         df_snapshot = snapshots_m7_df.get(snapshot_nome)
         if not isinstance(df_snapshot, pd.DataFrame):
-            print(f"[M7] snapshot {snapshot_nome} não retornado pelo módulo ativo")
+            _print_log(f"[M7] snapshot {snapshot_nome} não retornado pelo módulo ativo")
             continue
-        total_m7_snapshot = persistir_snapshot_modulo_auditoria(
+        total_m7_snapshot = _persistir_snapshot_se_ativo(auditoria_ativa, 
             teste_id=teste_id_auditoria,
             rodada_id=contexto.rodada_id,
             upload_id=contexto.upload_id,
@@ -2576,31 +2642,89 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         )
         auditoria_por_modulo["m7_sequenciamento_entregas"] = auditoria_por_modulo.get("m7_sequenciamento_entregas", 0) + total_m7_snapshot
         auditoria_por_snapshot[snapshot_nome] = auditoria_por_snapshot.get(snapshot_nome, 0) + total_m7_snapshot
-        print(f"[AUDITORIA FLAT] snapshot={snapshot_nome} linhas={total_m7_snapshot}")
+        _print_log(f"[AUDITORIA FLAT] snapshot={snapshot_nome} linhas={total_m7_snapshot}")
 
     tempo_total = _duracao_ms(inicio_total)
     metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
-    print(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
+    _print_log(f"[AUDITORIA FLAT] total_colunas_persistidas={len(auditoria_flat_rastreamento.get('colunas_persistidas', set()))}")
 
-    manifestos_m7_serializados = _serializar_dataframe_para_records(df_manifestos_m7)
-    itens_manifestos_sequenciados_m7_serializados = _serializar_dataframe_para_records(df_itens_manifestos_sequenciados_m7)
-    manifestos_sequenciamento_resumo_m7_serializados = _serializar_dataframe_para_records(df_manifestos_sequenciamento_resumo_m7)
-    paradas_m7_serializados = _serializar_dataframe_para_records(df_paradas_m7)
-    auditoria_m7_serializados = _serializar_dataframe_para_records(df_auditoria_m7)
-    tentativas_sequenciamento_m7_serializados = _serializar_dataframe_para_records(df_tentativas_sequenciamento_m7)
-    diagnostico_recuperacao_coordenadas_m7_serializados = _serializar_dataframe_para_records(
-        df_diagnostico_recuperacao_coordenadas_m7
+    if "tempo_total_pipeline_ms" not in metricas_tempo:
+        metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
+
+    df_manifestos_m7_contrato = _selecionar_colunas_obrigatorias_contrato(
+        df_manifestos_m7,
+        [
+            "manifesto_id", "origem_manifesto_modulo", "origem_manifesto_tipo", "perfil_final_m6_2", "qtd_eixos",
+            "peso_final_m6_2", "ocupacao_final_m6_2", "km_total_estimado_m6_2", "qtd_itens_final_m6_2",
+            "qtd_paradas_final_m6_2", "capacidade_peso_kg_veiculo", "max_km_distancia_veiculo",
+        ],
+        "manifestos_m7",
     )
-    remanescentes_nao_roteirizaveis_m3_serializados = _serializar_dataframe_para_records(df_nao_roteirizaveis_m3)
-    remanescentes_saldo_final_roteirizacao_serializados = _serializar_dataframe_para_records(df_remanescente_m6_2)
+    df_itens_manifestos_sequenciados_m7_contrato = _selecionar_colunas_obrigatorias_contrato(
+        df_itens_manifestos_sequenciados_m7,
+        [
+            "manifesto_id", "id_linha_pipeline", "nro_documento", "destinatario", "cidade", "uf", "peso_calculado",
+            "distancia_rodoviaria_est_km", "latitude_destinatario", "longitude_destinatario", "ordem_entrega_doc_m7",
+            "ordem_carregamento_doc_m7", "ordem_parada_m7", "ordem_entrega_parada_m7", "cidade_parada", "criterio_doc",
+            "status_sequenciamento_m7", "metodo_sequenciamento",
+        ],
+        "itens_manifestos_sequenciados_m7",
+    )
+    df_manifestos_sequenciamento_resumo_m7_contrato = _selecionar_colunas_obrigatorias_contrato(
+        df_manifestos_sequenciamento_resumo_m7,
+        [
+            "manifesto_id", "status_sequenciamento_m7", "metodo_predominante_m7", "qtd_docs", "qtd_paradas",
+            "qtd_cidades", "km_total_sequencia_paradas_m7", "km_total_sequencia_cidades_m7",
+        ],
+        "manifestos_sequenciamento_resumo_m7",
+    )
+    df_paradas_m7_contrato = _selecionar_colunas_obrigatorias_contrato(
+        df_paradas_m7,
+        [
+            "manifesto_id", "ordem_entrega_parada_m7", "chave_parada_seq_m7", "destinatario_ref_m7", "cidade_ref_m7",
+            "uf_ref_m7", "qtd_docs_parada_m7", "peso_total_m7", "distancia_origem_parada_km_m7", "lat_ref_m7", "lon_ref_m7",
+        ],
+        "paradas_m7",
+    )
+    df_nao_roteirizaveis_m3_contrato = _selecionar_colunas_reais_existentes(
+        _selecionar_colunas_obrigatorias_contrato(
+            df_nao_roteirizaveis_m3, ["id_linha_pipeline", "nro_documento", "destinatario", "cidade", "uf"], "nao_roteirizaveis_m3"
+        ),
+        [
+            "id_linha_pipeline", "nro_documento", "destinatario", "cidade", "uf", "peso_calculado", "distancia_rodoviaria_est_km",
+            "mesorregiao", "subregiao", "status_triagem", "motivo_triagem",
+        ],
+    )
+    df_remanescente_m6_2_contrato = _selecionar_colunas_reais_existentes(
+        _selecionar_colunas_obrigatorias_contrato(
+            df_remanescente_m6_2, ["id_linha_pipeline", "nro_documento", "destinatario", "cidade", "uf"], "saldo_final_roteirizacao"
+        ),
+        [
+            "id_linha_pipeline", "nro_documento", "destinatario", "cidade", "uf", "peso_calculado", "distancia_rodoviaria_est_km",
+            "mesorregiao", "subregiao", "corredor_30g", "corredor_30g_idx", "motivo_detalhado_m6_2",
+            "motivo_final_remanescente_m6_2", "motivo_final_remanescente_m5_4", "motivo_final_remanescente_m5_3",
+        ],
+    )
+    campos_motivo = [
+        "motivo_detalhado_m6_2",
+        "motivo_final_remanescente_m6_2",
+        "motivo_final_remanescente_m5_4",
+        "motivo_final_remanescente_m5_3",
+    ]
+    if not any(c in df_remanescente_m6_2_contrato.columns for c in campos_motivo):
+        raise Exception("Contrato Sistema 1 inválido: saldo_final_roteirizacao sem campo real de motivo")
+
+    _print_log(
+        f"[M7] df_itens_sequenciados_m7 linhas={_safe_len(df_itens_manifestos_sequenciados_m7_contrato)}",
+        force=not log_verbose,
+    )
 
     resposta: Dict[str, Any] = {
         "status": "ok",
-        "mensagem": "Execução encerrada após o M7 para auditoria do sequenciamento de entregas.",
+        "mensagem": "Roteirização concluída com sucesso até o M7.",
         "pipeline_real_ate": "M7",
-        "modo_resposta": "auditoria_m7_sequenciamento_entregas",
+        "modo_resposta": "contrato_sistema1_m7",
         "resposta_truncada": False,
-        "teste_id_auditoria": teste_id_auditoria,
         "resumo_execucao": {
             "rodada_id": contexto.rodada_id,
             "upload_id": contexto.upload_id,
@@ -2612,106 +2736,64 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         },
         "resumo_negocio": {
             "total_carteira": _safe_len(contexto.df_carteira_raw),
-            "total_enriquecida_m2": _safe_len(df_carteira_enriquecida),
-            "total_triagem_m3": _safe_len(df_carteira_triagem),
             "total_roteirizavel_m3": _safe_len(df_carteira_roteirizavel),
-            "total_input_bloco_4": _safe_len(df_input_oficial_bloco_4),
-            "total_manifestos_m6_2": _safe_len(df_manifestos_m6_2),
-            "total_itens_manifestos_m6_2": _safe_len(df_itens_manifestos_m6_2),
-            "total_manifestos_m7": _safe_len(df_manifestos_m7),
-            "total_itens_sequenciados_m7": _safe_len(df_itens_manifestos_sequenciados_m7),
-            "total_paradas_m7": _safe_len(df_paradas_m7),
-            "total_auditoria_m7": _safe_len(df_auditoria_m7),
-            "total_resumo_sequenciamento_m7": _safe_len(df_manifestos_sequenciamento_resumo_m7),
-            "total_tentativas_m7": _safe_len(df_tentativas_sequenciamento_m7),
-            "total_diagnostico_coordenadas_m7": _safe_len(df_diagnostico_recuperacao_coordenadas_m7),
+            "total_manifestos_m7": _safe_len(df_manifestos_m7_contrato),
+            "total_itens_sequenciados_m7": _safe_len(df_itens_manifestos_sequenciados_m7_contrato),
+            "total_remanescente_saldo_final": _safe_len(df_remanescente_m6_2_contrato),
+            "total_nao_roteirizaveis_m3": _safe_len(df_nao_roteirizaveis_m3_contrato),
+            "total_remanescentes_geral": _safe_len(df_remanescente_m6_2_contrato) + _safe_len(df_nao_roteirizaveis_m3_contrato),
+            "total_paradas_m7": _safe_len(df_paradas_m7_contrato),
+            "km_total_frota": float(df_manifestos_m7_contrato["km_total_estimado_m6_2"].sum()),
+            "ocupacao_media_percentual": float(df_manifestos_m7_contrato["ocupacao_final_m6_2"].mean()),
         },
-        "resumo_m4": resumo_m4,
-        "resumo_m5_1": resumo_m5_1,
-        "resumo_m5_2": resumo_m5_2,
-        "resumo_m5_3a": resumo_m5_3a,
-        "resumo_m5_3b": resumo_m5_3b,
-        "resumo_m5_4a": resumo_m5_4a,
-        "resumo_m5_4b": resumo_m5_4b,
-        "resumo_m6_1": resumo_m6_1,
-        "resumo_m6_2": resumo_m6_2,
-        "resumo_m7": {
-            **resumo_m7,
-            "total_manifestos_m7": _safe_len(df_manifestos_m7),
-            "total_itens_sequenciados_m7": _safe_len(df_itens_manifestos_sequenciados_m7),
-            "total_paradas_m7": _safe_len(df_paradas_m7),
-            "total_auditoria_m7": _safe_len(df_auditoria_m7),
-            "total_resumo_sequenciamento_m7": _safe_len(df_manifestos_sequenciamento_resumo_m7),
-            "total_tentativas_m7": _safe_len(df_tentativas_sequenciamento_m7),
-            "total_diagnostico_coordenadas_m7": _safe_len(df_diagnostico_recuperacao_coordenadas_m7),
-        },
-        "auditoria_modular": {
-            "teste_id_auditoria": teste_id_auditoria,
-            "modulos": [{"modulo": modulo, "linhas_gravadas": linhas} for modulo, linhas in auditoria_por_modulo.items()],
-            "snapshots": [{"snapshot_nome": snapshot_nome, "linhas_gravadas": linhas} for snapshot_nome, linhas in auditoria_por_snapshot.items()],
-            "colunas_persistidas": sorted(list(auditoria_flat_rastreamento.get("colunas_persistidas", set()))),
-        },
-        "auditoria_m7": auditoria_m7_serializados,
-        "auditoria_m7_meta": auditoria_m7,
-        "manifestos_m7": manifestos_m7_serializados,
-        "itens_manifestos_sequenciados_m7": itens_manifestos_sequenciados_m7_serializados,
-        "manifestos_sequenciamento_resumo_m7": manifestos_sequenciamento_resumo_m7_serializados,
-        "paradas_m7": paradas_m7_serializados,
-        "tentativas_sequenciamento_m7": tentativas_sequenciamento_m7_serializados,
-        "diagnostico_recuperacao_coordenadas_m7": diagnostico_recuperacao_coordenadas_m7_serializados,
+        "manifestos_m7": _serializar_dataframe_para_records(df_manifestos_m7_contrato),
+        "itens_manifestos_sequenciados_m7": _serializar_dataframe_para_records(df_itens_manifestos_sequenciados_m7_contrato),
+        "manifestos_sequenciamento_resumo_m7": _serializar_dataframe_para_records(df_manifestos_sequenciamento_resumo_m7_contrato),
+        "paradas_m7": _serializar_dataframe_para_records(df_paradas_m7_contrato),
         "remanescentes": {
-            "nao_roteirizaveis_m3": remanescentes_nao_roteirizaveis_m3_serializados,
-            "saldo_final_roteirizacao": remanescentes_saldo_final_roteirizacao_serializados,
+            "nao_roteirizaveis_m3": _serializar_dataframe_para_records(df_nao_roteirizaveis_m3_contrato),
+            "saldo_final_roteirizacao": _serializar_dataframe_para_records(df_remanescente_m6_2_contrato),
         },
-        "auditoria_serializacao": {
-            "manifestos_m7_total": _safe_len(df_manifestos_m7),
-            "manifestos_m7_retornado": len(manifestos_m7_serializados),
-            "itens_manifestos_sequenciados_m7_total": _safe_len(df_itens_manifestos_sequenciados_m7),
-            "itens_manifestos_sequenciados_m7_retornado": len(itens_manifestos_sequenciados_m7_serializados),
-            "manifestos_sequenciamento_resumo_m7_total": _safe_len(df_manifestos_sequenciamento_resumo_m7),
-            "manifestos_sequenciamento_resumo_m7_retornado": len(manifestos_sequenciamento_resumo_m7_serializados),
-            "paradas_m7_total": _safe_len(df_paradas_m7),
-            "paradas_m7_retornado": len(paradas_m7_serializados),
-            "auditoria_m7_total": _safe_len(df_auditoria_m7),
-            "auditoria_m7_retornado": len(auditoria_m7_serializados),
-            "tentativas_sequenciamento_m7_total": _safe_len(df_tentativas_sequenciamento_m7),
-            "tentativas_sequenciamento_m7_retornado": len(tentativas_sequenciamento_m7_serializados),
-            "diagnostico_recuperacao_coordenadas_m7_total": _safe_len(df_diagnostico_recuperacao_coordenadas_m7),
-            "diagnostico_recuperacao_coordenadas_m7_retornado": len(diagnostico_recuperacao_coordenadas_m7_serializados),
-            "remanescentes_nao_roteirizaveis_m3_total": _safe_len(df_nao_roteirizaveis_m3),
-            "remanescentes_nao_roteirizaveis_m3_retornado": len(remanescentes_nao_roteirizaveis_m3_serializados),
-            "remanescentes_saldo_final_roteirizacao_total": _safe_len(df_remanescente_m6_2),
-            "remanescentes_saldo_final_roteirizacao_retornado": len(remanescentes_saldo_final_roteirizacao_serializados),
-        },
-        "logs": logs,
     }
 
-    if debug:
-        resposta["debug"] = {
-            "snapshots": {
-                "df_manifestos_m7": _snapshot_dataframe(df_manifestos_m7, "df_manifestos_m7"),
-                "df_itens_manifestos_sequenciados_m7": _snapshot_dataframe(
-                    df_itens_manifestos_sequenciados_m7,
-                    "df_itens_manifestos_sequenciados_m7",
+    if retornar_auditoria_interna:
+        resposta.update(
+            {
+                "teste_id_auditoria": teste_id_auditoria,
+                "resumo_m4": resumo_m4,
+                "resumo_m5_1": resumo_m5_1,
+                "resumo_m5_2": resumo_m5_2,
+                "resumo_m5_3a": resumo_m5_3a,
+                "resumo_m5_3b": resumo_m5_3b,
+                "resumo_m5_4a": resumo_m5_4a,
+                "resumo_m5_4b": resumo_m5_4b,
+                "resumo_m6_1": resumo_m6_1,
+                "resumo_m6_2": resumo_m6_2,
+                "auditoria_modular": {
+                    "teste_id_auditoria": teste_id_auditoria,
+                    "modulos": [{"modulo": modulo, "linhas_gravadas": linhas} for modulo, linhas in auditoria_por_modulo.items()],
+                    "snapshots": [
+                        {"snapshot_nome": snapshot_nome, "linhas_gravadas": linhas} for snapshot_nome, linhas in auditoria_por_snapshot.items()
+                    ],
+                    "colunas_persistidas": sorted(list(auditoria_flat_rastreamento.get("colunas_persistidas", set()))),
+                },
+                "auditoria_m7": _serializar_dataframe_para_records(df_auditoria_m7),
+                "auditoria_m7_meta": auditoria_m7,
+                "tentativas_sequenciamento_m7": _serializar_dataframe_para_records(df_tentativas_sequenciamento_m7),
+                "diagnostico_recuperacao_coordenadas_m7": _serializar_dataframe_para_records(
+                    df_diagnostico_recuperacao_coordenadas_m7
                 ),
-                "df_paradas_m7": _snapshot_dataframe(df_paradas_m7, "df_paradas_m7"),
-                "df_auditoria_m7": _snapshot_dataframe(df_auditoria_m7, "df_auditoria_m7"),
-                "df_manifestos_sequenciamento_resumo_m7": _snapshot_dataframe(
-                    df_manifestos_sequenciamento_resumo_m7,
-                    "df_manifestos_sequenciamento_resumo_m7",
-                ),
-                "df_tentativas_sequenciamento_m7": _snapshot_dataframe(
-                    df_tentativas_sequenciamento_m7,
-                    "df_tentativas_sequenciamento_m7",
-                ),
-                "df_diagnostico_recuperacao_coordenadas_m7": _snapshot_dataframe(
-                    df_diagnostico_recuperacao_coordenadas_m7,
-                    "df_diagnostico_recuperacao_coordenadas_m7",
-                ),
-            },
-        }
+                "logs": logs,
+            }
+        )
 
-
+    _print_log(
+        f"[CONTRATO SISTEMA1] manifestos_m7={_safe_len(df_manifestos_m7_contrato)} "
+        f"itens_m7={_safe_len(df_itens_manifestos_sequenciados_m7_contrato)} "
+        f"remanescentes_saldo={_safe_len(df_remanescente_m6_2_contrato)}",
+        force=True,
+    )
+    _print_log("[PIPELINE] Execução concluída", force=True)
     return resposta
 
 

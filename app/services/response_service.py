@@ -36,6 +36,14 @@ def montar_resposta_sucesso(resultado_pipeline: Dict[str, Any]) -> Dict[str, Any
     Preserva contrato completo retornado pelo pipeline.
     """
     resposta = dict(resultado_pipeline or {})
+    if resposta.get("modo_resposta") == "contrato_sistema1_m7":
+        resposta.setdefault("manifestos_m7", _safe_list(resposta.get("manifestos_m7")))
+        resposta.setdefault("itens_manifestos_sequenciados_m7", _safe_list(resposta.get("itens_manifestos_sequenciados_m7")))
+        resposta.setdefault("manifestos_sequenciamento_resumo_m7", _safe_list(resposta.get("manifestos_sequenciamento_resumo_m7")))
+        resposta.setdefault("paradas_m7", _safe_list(resposta.get("paradas_m7")))
+        resposta.setdefault("remanescentes", {"nao_roteirizaveis_m3": [], "saldo_final_roteirizacao": []})
+        return resposta
+
     resposta.setdefault("manifestos_m7", _safe_list(resposta.get("manifestos_m7")))
     resposta.setdefault("itens_manifestos_sequenciados_m7", _safe_list(resposta.get("itens_manifestos_sequenciados_m7")))
     resposta.setdefault("manifestos_sequenciamento_resumo_m7", _safe_list(resposta.get("manifestos_sequenciamento_resumo_m7")))
