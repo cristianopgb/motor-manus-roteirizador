@@ -491,6 +491,7 @@ def executar_m6_2_complemento_ocupacao(
             })
 
     df_manifestos = _recalcular_todos_manifestos(df_manifestos, df_itens)
+    df_manifestos = _recalcular_campos_geo_auditoria_finais(df_manifestos, df_itens)
 
     _validar_integridade_final(
         df_itens_manifestos_final=df_itens,
@@ -1028,6 +1029,31 @@ def _recalcular_todos_manifestos(df_manifestos: pd.DataFrame, df_itens: pd.DataF
     out = df_manifestos.copy()
     for manifesto_id in out["manifesto_id"].astype(str).tolist():
         out = _recalcular_manifesto_unico(out, df_itens, manifesto_id)
+    return out.reset_index(drop=True)
+
+
+def _recalcular_campos_geo_auditoria_finais(df_manifestos: pd.DataFrame, df_itens: pd.DataFrame) -> pd.DataFrame:
+    out = df_manifestos.copy()
+    if out.empty:
+        return out
+
+    if "km_total_estimado_m6_2" not in out.columns:
+        out["km_total_estimado_m6_2"] = np.nan
+    if "corredor_ancora_m6_2" not in out.columns:
+        out["corredor_ancora_m6_2"] = np.nan
+    if "diff_corredor_max_m6_2" not in out.columns:
+        out["diff_corredor_max_m6_2"] = np.nan
+
+    for i, manifesto_id in out["manifesto_id"].astype(str).items():
+        manifesto = out.loc[i].to_dict()
+        itens_manifesto = df_itens.loc[df_itens["manifesto_id"].astype(str) == str(manifesto_id)].copy()
+        corredor_ancora, _ = _corredor_dominante_manifesto(itens_manifesto)
+        diff_max = _diff_corredor_max_manifesto(itens_manifesto, corredor_ancora)
+        km_total_estimado_manifesto, _ = _estimar_km_total_manifesto_heuristico(manifesto, itens_manifesto)
+        out.loc[i, "km_total_estimado_m6_2"] = km_total_estimado_manifesto
+        out.loc[i, "corredor_ancora_m6_2"] = corredor_ancora
+        out.loc[i, "diff_corredor_max_m6_2"] = diff_max
+
     return out.reset_index(drop=True)
 
 
