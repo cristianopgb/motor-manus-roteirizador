@@ -37,11 +37,11 @@ PIPELINE_FLAGS = {
     "executar_m6_1": True,
     "executar_m6_2": True,
     "executar_m7": True,
-    "executar_validadores_exaustao": True,
-    "executar_m4_repescagem": True,
-    "executar_m5_2_repescagem": True,
-    "executar_m5_3_repescagem": True,
-    "executar_m5_4_repescagem": True,
+    "executar_validadores_exaustao": False,
+    "executar_m4_repescagem": False,
+    "executar_m5_2_repescagem": False,
+    "executar_m5_3_repescagem": False,
+    "executar_m5_4_repescagem": False,
 }
 
 
