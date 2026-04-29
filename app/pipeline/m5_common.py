@@ -204,6 +204,7 @@ def normalize_saldo_m5(
         "distancia_rodoviaria_est_km": 0.0,
         "restricao_veiculo": None,
         "agendada": False,
+        "flag_agendada_roteirizavel": False,
         "folga_dias": 999,
         "prioridade_embarque_num": pd.NA,
         "prioridade_embarque": pd.NA,
@@ -265,7 +266,7 @@ def normalize_saldo_m5(
         if col in saldo.columns:
             saldo[col] = pd.to_numeric(saldo[col], errors="coerce")
 
-    bool_cols = ["agendada", "veiculo_exclusivo", "veiculo_exclusivo_flag"]
+    bool_cols = ["agendada", "flag_agendada_roteirizavel", "veiculo_exclusivo", "veiculo_exclusivo_flag"]
     for col in bool_cols:
         if col in saldo.columns:
             saldo[col] = saldo[col].apply(safe_bool)
