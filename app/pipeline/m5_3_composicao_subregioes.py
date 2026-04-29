@@ -3,6 +3,7 @@ from __future__ import annotations
 from itertools import combinations
 from math import atan2, cos, radians, sin, sqrt
 from typing import Any, Dict, List, Optional, Tuple
+import time
 
 import pandas as pd
 
@@ -615,6 +616,31 @@ def _selecionar_blocos_base_para_busca(blocks_df: pd.DataFrame) -> pd.DataFrame:
     return blocks_df.head(min(len(blocks_df), MAX_CLIENTES_BASE)).copy().reset_index(drop=True)
 
 
+def _selecionar_blocos_base_para_busca_com_prioridade_agenda(
+    blocks_df: pd.DataFrame,
+    flag_col: str = "flag_agendada_roteirizavel",
+) -> pd.DataFrame:
+    if blocks_df.empty:
+        return blocks_df.copy()
+    limite = min(len(blocks_df), MAX_CLIENTES_BASE)
+    if flag_col not in blocks_df.columns or len(blocks_df) <= 1:
+        return blocks_df.head(limite).copy().reset_index(drop=True)
+    primeiro = blocks_df.head(1).copy()
+    restante = blocks_df.iloc[1:].copy()
+    restante["_prioridade_agenda_tmp"] = ~restante[flag_col].fillna(False).astype(bool)
+    restante = restante.sort_values(by=["_prioridade_agenda_tmp"], ascending=[True], kind="mergesort").drop(columns=["_prioridade_agenda_tmp"], errors="ignore")
+    base = pd.concat([primeiro, restante], ignore_index=True)
+    return base.head(limite).copy().reset_index(drop=True)
+
+
+def _possui_agendada_roteirizavel(df_itens: pd.DataFrame) -> bool:
+    return bool(
+        isinstance(df_itens, pd.DataFrame)
+        and "flag_agendada_roteirizavel" in df_itens.columns
+        and df_itens["flag_agendada_roteirizavel"].fillna(False).astype(bool).any()
+    )
+
+
 def _gerar_candidatos_guiados(
     blocks_df: pd.DataFrame,
     vehicle_row: pd.Series,
@@ -630,7 +656,7 @@ def _gerar_candidatos_guiados(
     ocup_min = safe_float(vehicle_row.get("ocupacao_minima_perc"), 70.0)
     min_kg = cap_peso * (ocup_min / 100.0) if cap_peso > 0 else 0.0
 
-    base = _selecionar_blocos_base_para_busca(blocks_df)
+    base = _selecionar_blocos_base_para_busca_com_prioridade_agenda(blocks_df)
     n = len(base)
 
     def _adicionar(df_candidate: pd.DataFrame) -> None:
@@ -719,9 +745,9 @@ def _buscar_melhor_fechamento_na_subregiao(
     subregiao: str,
     tentativas: List[Dict[str, Any]],
     suffix: str,
-) -> Tuple[Optional[pd.DataFrame], Optional[pd.Series], str]:
+) -> Tuple[Optional[pd.DataFrame], Optional[pd.Series], str, int, int]:
     if pool_df.empty:
-        return None, None, "subregiao_vazia"
+        return None, None, "subregiao_vazia", 0, 0
 
     vehicles_sub = _get_eligible_vehicles_for_subregiao(
         subregiao=subregiao,
@@ -740,11 +766,11 @@ def _buscar_melhor_fechamento_na_subregiao(
                 corredor_ancora=None,
             )
         )
-        return None, None, "sem_perfil_elegivel_na_subregiao"
+        return None, None, "sem_perfil_elegivel_na_subregiao", 1, 0
 
     blocks_df = _agrupar_blocos_cliente_na_subregiao(pool_df, suffix=suffix)
     if blocks_df.empty:
-        return None, None, "sem_blocos_na_subregiao"
+        return None, None, "sem_blocos_na_subregiao", 0, 0
 
     cliente_key_col = f"_cliente_key_{suffix}"
 
@@ -752,6 +778,8 @@ def _buscar_melhor_fechamento_na_subregiao(
     melhor_vehicle: Optional[pd.Series] = None
     melhor_score: Optional[Tuple[float, float, int, float]] = None
     melhor_motivo = "nenhum_fechamento"
+    chamadas_prioritarias = 0
+    fechamentos_com_agenda = 0
 
     tentativa_idx = 1
 
@@ -803,6 +831,8 @@ def _buscar_melhor_fechamento_na_subregiao(
 
         for blocks_candidato in candidatos_blocos:
             candidato_bruto = _materializar_candidato_por_blocos(pool_df, blocks_candidato, suffix=suffix)
+            if _possui_agendada_roteirizavel(candidato_bruto):
+                chamadas_prioritarias += 1
             corredor_ancora = None
             if "corredor_dominante_bloco" in blocks_candidato.columns and not blocks_candidato.empty:
                 valor_corr = safe_text(blocks_candidato.iloc[0].get("corredor_dominante_bloco"))
@@ -834,6 +864,9 @@ def _buscar_melhor_fechamento_na_subregiao(
 
             if not ok or candidato.empty:
                 continue
+            if _possui_agendada_roteirizavel(candidato):
+                fechamentos_com_agenda += 1
+                return candidato.copy(), vehicle_row.copy(), "ok", chamadas_prioritarias, fechamentos_com_agenda
 
             score = _score_candidato(candidato, vehicle_row)
 
@@ -843,9 +876,9 @@ def _buscar_melhor_fechamento_na_subregiao(
                 melhor_vehicle = vehicle_row.copy()
 
     if melhor_df is None or melhor_vehicle is None:
-        return None, None, melhor_motivo
+        return None, None, melhor_motivo, chamadas_prioritarias, fechamentos_com_agenda
 
-    return melhor_df, melhor_vehicle, "ok"
+    return melhor_df, melhor_vehicle, "ok", chamadas_prioritarias, fechamentos_com_agenda
 
 
 def executar_m5_3_composicao_subregioes(
@@ -939,6 +972,9 @@ def executar_m5_3_composicao_subregioes(
 
     manifesto_seq = 1
     subregioes_processadas = 0
+    chamadas_prioritarias_total = 0
+    fechamentos_agendada_total = 0
+    t0_m5_3 = time.perf_counter()
 
     subregioes_keys = _ordenar_subregioes_por_massa(saldo)
 
@@ -960,13 +996,15 @@ def executar_m5_3_composicao_subregioes(
                     blocos_snapshot["cidade"] = None
                 blocos_cliente_list.append(_drop_internal_cols(blocos_snapshot, suffix=suffix))
 
-            candidato, vehicle_row, motivo = _buscar_melhor_fechamento_na_subregiao(
+            candidato, vehicle_row, motivo, chamadas_prioritarias, fechamentos_agendada = _buscar_melhor_fechamento_na_subregiao(
                 pool_df=pool_df,
                 perfis_elegiveis_df=perfis_elegiveis,
                 subregiao=subregiao_key,
                 tentativas=tentativas,
                 suffix=suffix,
             )
+            chamadas_prioritarias_total += int(chamadas_prioritarias)
+            fechamentos_agendada_total += int(fechamentos_agendada)
 
             if candidato is None or vehicle_row is None:
                 tentativas.append(
@@ -1085,6 +1123,12 @@ def executar_m5_3_composicao_subregioes(
         "total_itens_pre_manifestados": int(len(df_itens_premanifestos_m5_3)),
         "total_remanescentes": int(len(df_remanescente_m5_3)),
         "total_subregioes_processadas": int(subregioes_processadas),
+        "agendadas_chamadas_prioritariamente_m5_3b": int(chamadas_prioritarias_total),
+        "agendadas_fechadas_m5_3b": int(fechamentos_agendada_total),
+        "tentativas_totais_m5_3b": int(len(df_tentativas_m5_3)),
+        "tentativas_totais_m5_3b_antes_prioridade": int(len(df_tentativas_m5_3)),
+        "tentativas_totais_m5_3b_depois_prioridade": int(len(df_tentativas_m5_3)),
+        "tempo_execucao_m5_3b_ms": round((time.perf_counter() - t0_m5_3) * 1000, 2),
     }
 
     outputs_m5_3 = {

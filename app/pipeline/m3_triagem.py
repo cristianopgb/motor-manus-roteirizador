@@ -7,6 +7,15 @@ import numpy as np
 import pandas as pd
 
 
+def _data_agenda_valida(valor: Any) -> bool:
+    if pd.isna(valor):
+        return False
+    texto = str(valor).strip().lower()
+    if texto in ("", "nat", "nan", "none", "null"):
+        return False
+    return True
+
+
 def executar_m3_triagem(
     df_carteira_enriquecida: pd.DataFrame,
     data_base_roteirizacao: datetime,
@@ -80,6 +89,14 @@ def executar_m3_triagem(
     carteira["flag_roteirizavel"] = carteira["status_triagem"].eq("roteirizavel")
     carteira["flag_agendamento_futuro"] = carteira["status_triagem"].eq("agendamento_futuro")
     carteira["flag_agenda_vencida"] = carteira["status_triagem"].eq("agenda_vencida")
+    folga_num = pd.to_numeric(carteira["folga_dias"], errors="coerce")
+    data_agenda_valida = carteira["data_agenda"].apply(_data_agenda_valida)
+    carteira["flag_agendada_roteirizavel"] = (
+        carteira["status_triagem"].eq("roteirizavel")
+        & data_agenda_valida
+        & folga_num.ge(0)
+        & folga_num.lt(2)
+    )
 
     df_carteira_triagem = carteira.copy()
 

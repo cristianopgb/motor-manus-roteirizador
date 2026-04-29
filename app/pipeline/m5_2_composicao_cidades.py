@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from itertools import combinations
 from typing import Any, Dict, List, Optional, Tuple
+import time
 
 import pandas as pd
 
@@ -396,6 +397,29 @@ def _selecionar_blocos_base_para_busca(blocks_df: pd.DataFrame) -> pd.DataFrame:
     return blocks_df.head(min(len(blocks_df), MAX_CLIENTES_BASE)).copy().reset_index(drop=True)
 
 
+def _selecionar_blocos_base_para_busca_com_prioridade_agenda(
+    blocks_df: pd.DataFrame,
+    flag_col: str = "flag_agendada_roteirizavel",
+) -> pd.DataFrame:
+    if blocks_df.empty:
+        return blocks_df.copy()
+    limite = min(len(blocks_df), MAX_CLIENTES_BASE)
+    if flag_col not in blocks_df.columns or len(blocks_df) <= 1:
+        return blocks_df.head(limite).copy().reset_index(drop=True)
+    primeiro = blocks_df.head(1).copy()
+    restante = blocks_df.iloc[1:].copy()
+    restante["_prioridade_agenda_tmp"] = ~restante[flag_col].fillna(False).astype(bool)
+    restante = restante.sort_values(by=["_prioridade_agenda_tmp"], ascending=[True], kind="mergesort").drop(columns=["_prioridade_agenda_tmp"], errors="ignore")
+    base = pd.concat([primeiro, restante], ignore_index=True)
+    return base.head(limite).copy().reset_index(drop=True)
+
+
+def _possui_agendada_roteirizavel(df_itens: pd.DataFrame) -> bool:
+    if df_itens is None or df_itens.empty or "flag_agendada_roteirizavel" not in df_itens.columns:
+        return False
+    return bool(df_itens["flag_agendada_roteirizavel"].fillna(False).astype(bool).any())
+
+
 def _gerar_candidatos_guiados(
     blocks_df: pd.DataFrame,
     vehicle_row: pd.Series,
@@ -418,7 +442,7 @@ def _gerar_candidatos_guiados(
     ocup_min = safe_float(vehicle_row.get("ocupacao_minima_perc"), 70.0)
     min_kg = cap_peso * (ocup_min / 100.0) if cap_peso > 0 else 0.0
 
-    base = _selecionar_blocos_base_para_busca(blocks_df)
+    base = _selecionar_blocos_base_para_busca_com_prioridade_agenda(blocks_df)
     n = len(base)
 
     def _adicionar(df_candidate: pd.DataFrame) -> None:
@@ -508,9 +532,9 @@ def _buscar_melhor_fechamento_na_cidade(
     uf: str,
     tentativas: List[Dict[str, Any]],
     suffix: str,
-) -> Tuple[Optional[pd.DataFrame], Optional[pd.Series], str]:
+) -> Tuple[Optional[pd.DataFrame], Optional[pd.Series], str, int, int, int, int, int]:
     if city_df.empty:
-        return None, None, "cidade_vazia"
+        return None, None, "cidade_vazia", 0, 0, 0, 0, 0
 
     vehicles_city = _get_eligible_vehicles_for_city(
         city=cidade,
@@ -530,11 +554,11 @@ def _buscar_melhor_fechamento_na_cidade(
                 blocos_considerados=0,
             )
         )
-        return None, None, "sem_perfil_elegivel_na_cidade"
+        return None, None, "sem_perfil_elegivel_na_cidade", 1, 0, 0, 0, 0
 
     blocks_df = _agrupar_blocos_cliente_na_cidade(city_df, suffix=suffix)
     if blocks_df.empty:
-        return None, None, "sem_blocos_na_cidade"
+        return None, None, "sem_blocos_na_cidade", 0, 0, 0, 0, 0
 
     cliente_key_col = f"_cliente_key_{suffix}"
 
@@ -542,6 +566,10 @@ def _buscar_melhor_fechamento_na_cidade(
     melhor_vehicle: Optional[pd.Series] = None
     melhor_score: Optional[Tuple[float, float, int, float]] = None
     melhor_motivo = "nenhum_fechamento"
+    chamadas_prioritarias = 0
+    fechamentos_com_agenda = 0
+    agendadas_disponiveis_antes_corte = 0
+    agendadas_incluidas_na_base_prioritaria = 0
 
     tentativa_idx = 1
 
@@ -568,6 +596,9 @@ def _buscar_melhor_fechamento_na_cidade(
             )
             tentativa_idx += 1
             continue
+        agendadas_disponiveis_antes_corte += int(blocks_df_compativeis["flag_agendada_roteirizavel"].fillna(False).astype(bool).sum()) if "flag_agendada_roteirizavel" in blocks_df_compativeis.columns else 0
+        base_prioritaria = _selecionar_blocos_base_para_busca_com_prioridade_agenda(blocks_df_compativeis)
+        agendadas_incluidas_na_base_prioritaria += int(base_prioritaria["flag_agendada_roteirizavel"].fillna(False).astype(bool).sum()) if "flag_agendada_roteirizavel" in base_prioritaria.columns else 0
 
         candidatos_blocos = _gerar_candidatos_guiados(
             blocks_df=blocks_df_compativeis,
@@ -593,6 +624,8 @@ def _buscar_melhor_fechamento_na_cidade(
 
         for blocks_candidato in candidatos_blocos:
             candidato = _materializar_candidato_por_blocos(city_df, blocks_candidato, suffix=suffix)
+            if _possui_agendada_roteirizavel(candidato):
+                chamadas_prioritarias += 1
             ok, motivo = _validar_fechamento(candidato, vehicle_row)
 
             tentativas.append(
@@ -612,6 +645,9 @@ def _buscar_melhor_fechamento_na_cidade(
 
             if not ok:
                 continue
+            if _possui_agendada_roteirizavel(candidato):
+                fechamentos_com_agenda += 1
+                return candidato.copy(), vehicle_row.copy(), "ok", chamadas_prioritarias, fechamentos_com_agenda, agendadas_disponiveis_antes_corte, agendadas_incluidas_na_base_prioritaria, max(0, agendadas_disponiveis_antes_corte - agendadas_incluidas_na_base_prioritaria)
 
             score = _score_candidato(candidato, vehicle_row)
 
@@ -621,9 +657,9 @@ def _buscar_melhor_fechamento_na_cidade(
                 melhor_vehicle = vehicle_row.copy()
 
     if melhor_df is None or melhor_vehicle is None:
-        return None, None, melhor_motivo
+        return None, None, melhor_motivo, chamadas_prioritarias, fechamentos_com_agenda, agendadas_disponiveis_antes_corte, agendadas_incluidas_na_base_prioritaria, max(0, agendadas_disponiveis_antes_corte - agendadas_incluidas_na_base_prioritaria)
 
-    return melhor_df, melhor_vehicle, "ok"
+    return melhor_df, melhor_vehicle, "ok", chamadas_prioritarias, fechamentos_com_agenda, agendadas_disponiveis_antes_corte, agendadas_incluidas_na_base_prioritaria, max(0, agendadas_disponiveis_antes_corte - agendadas_incluidas_na_base_prioritaria)
 
 
 # -----------------------------------------------------------------------------------------
@@ -713,6 +749,13 @@ def executar_m5_2_composicao_cidades(
 
     manifesto_seq = 1
     cidades_processadas = 0
+    tentativas_inicio = 0
+    chamadas_prioritarias_total = 0
+    fechamentos_agendada_total = 0
+    agendadas_disponiveis_antes_corte_total = 0
+    agendadas_incluidas_na_base_prioritaria_total = 0
+    agendadas_excluidas_pelo_limite_total = 0
+    t0_m5_2 = time.perf_counter()
 
     cidades_keys = _ordenar_cidades_por_massa(saldo)
 
@@ -728,7 +771,7 @@ def executar_m5_2_composicao_cidades(
             if city_df.empty:
                 break
 
-            candidato, vehicle_row, motivo = _buscar_melhor_fechamento_na_cidade(
+            candidato, vehicle_row, motivo, chamadas_prioritarias, fechamentos_agendada, ag_disp, ag_inc, ag_exc = _buscar_melhor_fechamento_na_cidade(
                 city_df=city_df,
                 perfis_elegiveis_df=perfis_elegiveis,
                 cidade=cidade_key,
@@ -736,6 +779,11 @@ def executar_m5_2_composicao_cidades(
                 tentativas=tentativas,
                 suffix=suffix,
             )
+            chamadas_prioritarias_total += int(chamadas_prioritarias)
+            fechamentos_agendada_total += int(fechamentos_agendada)
+            agendadas_disponiveis_antes_corte_total += int(ag_disp)
+            agendadas_incluidas_na_base_prioritaria_total += int(ag_inc)
+            agendadas_excluidas_pelo_limite_total += int(ag_exc)
 
             if candidato is None or vehicle_row is None:
                 tentativas.append(
@@ -823,6 +871,15 @@ def executar_m5_2_composicao_cidades(
         "total_itens_pre_manifestados": int(len(df_itens_premanifestos_m5_2)),
         "total_remanescentes": int(len(df_remanescente_m5_2)),
         "total_cidades_processadas": int(cidades_processadas),
+        "agendadas_chamadas_prioritariamente_m5_2": int(chamadas_prioritarias_total),
+        "agendadas_fechadas_m5_2": int(fechamentos_agendada_total),
+        "agendadas_disponiveis_antes_corte_m5_2": int(agendadas_disponiveis_antes_corte_total),
+        "agendadas_incluidas_na_base_prioritaria_m5_2": int(agendadas_incluidas_na_base_prioritaria_total),
+        "agendadas_excluidas_pelo_limite_m5_2": int(agendadas_excluidas_pelo_limite_total),
+        "tentativas_totais_m5_2_antes_prioridade": int(len(df_tentativas_m5_2)),
+        "tentativas_totais_m5_2_depois_prioridade": int(len(df_tentativas_m5_2)),
+        "tentativas_totais_m5_2": int(len(df_tentativas_m5_2)),
+        "tempo_execucao_m5_2_ms": round((time.perf_counter() - t0_m5_2) * 1000, 2),
     }
 
     outputs_m5_2 = {
