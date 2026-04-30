@@ -611,13 +611,18 @@ def _avaliar_combo_no_veiculo(
 
     ocupacao_oficial = base_carga_total / cap_peso if pd.notna(cap_peso) and cap_peso > 0 else np.nan
 
+    ocup_min_perc = _num_safe(veic.get("ocupacao_minima_perc"), default=OCUPACAO_MINIMA_PADRAO * 100)
+    ocup_max_perc = _num_safe(veic.get("ocupacao_maxima_perc"), default=OCUPACAO_MAXIMA_PADRAO * 100)
+    ocup_min = ocup_min_perc / 100.0
+    ocup_max = ocup_max_perc / 100.0
+
     if ignorar_ocupacao_minima:
         passa_ocupacao = True
     else:
         passa_ocupacao = (
             pd.notna(ocupacao_oficial)
-            and ocupacao_oficial >= OCUPACAO_MINIMA_PADRAO
-            and ocupacao_oficial < OCUPACAO_MAXIMA_PADRAO
+            and ocupacao_oficial >= ocup_min
+            and ocupacao_oficial <= ocup_max
         )
 
     aceito = bool(
@@ -649,6 +654,8 @@ def _avaliar_combo_no_veiculo(
         "cabe_restricao_veiculo": cabe_restricao_veiculo,
         "ocupacao_oficial_perc": round(float(ocupacao_oficial * 100), 2) if pd.notna(ocupacao_oficial) else np.nan,
         "passa_ocupacao": passa_ocupacao,
+        "ocupacao_minima_perc_veiculo": ocup_min_perc,
+        "ocupacao_maxima_perc_veiculo": ocup_max_perc,
         "ignorar_ocupacao_minima": bool(ignorar_ocupacao_minima),
         "ignorar_raio": bool(ignorar_raio),
         "aceito": aceito,
@@ -667,7 +674,7 @@ def _motivo_reprovacao(avaliacao: Dict[str, Any], exigir_ocupacao: bool = True, 
     if exigir_raio and not avaliacao.get("cabe_km", True):
         motivos.append("excede_max_km")
     if exigir_ocupacao and not avaliacao.get("passa_ocupacao", True):
-        motivos.append("nao_atinge_faixa_ocupacao_70_100")
+        motivos.append("nao_atinge_faixa_ocupacao_perfil")
     if not avaliacao.get("cabe_restricao_veiculo", True):
         motivos.append("restricao_veiculo_incompativel")
 
@@ -736,7 +743,7 @@ def _contabilizar_tentativa(contadores_m4: Dict[str, Any], tent: Dict[str, Any])
 
     if motivo == "perfil_sem_disponibilidade_no_modo_frota":
         contadores_m4["qtd_tentativas_sem_disponibilidade_frota"] += 1
-    if "nao_atinge_faixa_ocupacao_70_100" in motivo:
+    if "nao_atinge_faixa_ocupacao_70_100" in motivo or "nao_atinge_faixa_ocupacao_perfil" in motivo:
         contadores_m4["qtd_tentativas_rejeitadas_ocupacao"] += 1
     if "excede_max_km" in motivo:
         contadores_m4["qtd_tentativas_rejeitadas_km"] += 1
@@ -1130,7 +1137,62 @@ def _executar_nao_dedicados(
     tipo_roteirizacao: str,
     contadores_m4: Dict[str, Any],
 ) -> None:
+    def grupo_excede_maior_perfil_m4(df_grupo: pd.DataFrame, maior_perfil: pd.Series) -> bool:
+        cap_peso = _num_safe(maior_perfil.get("capacidade_peso_kg"), default=np.nan)
+        cap_vol = _num_safe(maior_perfil.get("capacidade_vol_m3"), default=np.nan)
+        max_ent = _int_safe(maior_perfil.get("max_entregas"), default=0)
+        peso = _obter_base_carga_oficial(df_grupo)
+        vol = float(pd.to_numeric(df_grupo["vol_m3"], errors="coerce").fillna(0).sum())
+        paradas = _calcular_qtd_paradas(df_grupo)
+        if pd.notna(cap_peso) and cap_peso > 0 and peso > cap_peso:
+            return True
+        if pd.notna(cap_vol) and cap_vol > 0 and vol > cap_vol:
+            return True
+        if max_ent > 0 and paradas > max_ent:
+            return True
+        return False
+
+    auditoria_oversized = contadores_m4.setdefault(
+        "auditoria_blocos_oversized_m4",
+        {
+            "total_clientes_avaliados_m4": 0,
+            "total_clientes_oversized_m4": 0,
+            "total_manifestos_gerados_de_clientes_oversized_m4": 0,
+            "total_itens_manifestados_oversized_m4": 0,
+            "total_itens_saldo_oversized_m4": 0,
+            "total_peso_original_oversized_m4": 0.0,
+            "total_peso_manifestado_oversized_m4": 0.0,
+            "total_peso_saldo_oversized_m4": 0.0,
+            "clientes_oversized_m4": [],
+        },
+    )
+
+    def montar_candidato_cliente_oversized_m4(df_grupo_cliente: pd.DataFrame, maior_perfil_viavel: pd.Series) -> pd.DataFrame:
+        if len(df_grupo_cliente) == 0:
+            return df_grupo_cliente.head(0).copy()
+        col_estavel = "id_linha_pipeline" if "id_linha_pipeline" in df_grupo_cliente.columns else _obter_coluna_id_documento(df_grupo_cliente)
+        ordenado = df_grupo_cliente.sort_values(
+            by=["peso_calculado", "vol_m3", col_estavel],
+            ascending=[False, False, True],
+            kind="mergesort",
+        ).copy()
+        cap_peso = _num_safe(maior_perfil_viavel.get("capacidade_peso_kg"), default=0.0)
+        cap_vol = _num_safe(maior_perfil_viavel.get("capacidade_vol_m3"), default=np.nan)
+        max_ent = _int_safe(maior_perfil_viavel.get("max_entregas"), default=0)
+        idxs: List[int] = []
+        for idx, row in ordenado.iterrows():
+            candidato = ordenado.loc[idxs + [idx]].copy()
+            if cap_peso > 0 and _obter_base_carga_oficial(candidato) > cap_peso:
+                continue
+            if pd.notna(cap_vol) and float(pd.to_numeric(candidato["vol_m3"], errors="coerce").fillna(0).sum()) > cap_vol:
+                continue
+            if max_ent > 0 and _calcular_qtd_paradas(candidato) > max_ent:
+                continue
+            idxs.append(idx)
+        return ordenado.loc[idxs].copy() if len(idxs) > 0 else ordenado.head(0).copy()
+
     for cliente, df_cliente in grupos_validos:
+        auditoria_oversized["total_clientes_avaliados_m4"] += 1
         pool_cliente = _filtrar_nao_alocados(df_cliente, ctx["ids_alocados"])
         if len(pool_cliente) == 0:
             continue
@@ -1158,68 +1220,148 @@ def _executar_nao_dedicados(
             _contabilizar_tentativa(contadores_m4, tent)
             continue
 
-        fechado = False
+        fechado_cliente = False
+        pool_loop = pool_cliente.copy()
+        cliente_oversized = False
+        maior_perfil_usado: Optional[pd.Series] = None
+        manifestos_cliente_oversized = 0
+        itens_manifestados_cliente = 0
+        peso_manifestado_cliente = 0.0
 
-        for _, row_veic in perfis_compativeis.iterrows():
-            idx_original = int(row_veic["index"])
-            veic = catalogo_veiculos.loc[idx_original]
+        while len(pool_loop) > 0:
+            fechou_iteracao = False
+            perfis_compativeis = _perfis_compativeis_por_raio(
+                catalogo_veiculos=catalogo_veiculos,
+                km_referencia=_calcular_km_referencia(pool_loop),
+                tipo_roteirizacao=tipo_roteirizacao,
+            )
+            if len(perfis_compativeis) == 0:
+                break
 
-            if not _veiculo_disponivel_no_modo_frota(veic, tipo_roteirizacao):
+            row_maior = perfis_compativeis.iloc[0]
+            veic_maior = catalogo_veiculos.loc[int(row_maior["index"])]
+            maior_perfil_usado = veic_maior
+            precisa_oversized = grupo_excede_maior_perfil_m4(pool_loop, veic_maior)
+            combo_teste = pool_loop
+            if precisa_oversized:
+                cliente_oversized = True
+                combo_teste = montar_candidato_cliente_oversized_m4(pool_loop, veic_maior)
+                print("[M4 OVERSIZED] candidato montado")
+                if len(combo_teste) == 0:
+                    break
+
+            avaliacao = None
+            idx_original = None
+            for _, row_veic in perfis_compativeis.iterrows():
+                idx_original = int(row_veic["index"])
+                veic = catalogo_veiculos.loc[idx_original]
+                if not _veiculo_disponivel_no_modo_frota(veic, tipo_roteirizacao):
+                    tent = {
+                        "etapa_fechamento": "4C_nao_exclusivos",
+                        "tipo_tentativa": "cliente_nao_exclusivo",
+                        "cliente_referencia": cliente,
+                        "linha_ancora": anchor_id,
+                        "veiculo_tipo": veic["tipo"],
+                        "resultado_teste": "rejeitado",
+                        "motivo_reprovacao": "perfil_sem_disponibilidade_no_modo_frota",
+                    }
+                    ctx["tentativas_fechamento"].append(tent)
+                    _contabilizar_tentativa(contadores_m4, tent)
+                    continue
+
+                avaliacao = _avaliar_combo_no_veiculo(
+                    combo_teste,
+                    veic=veic,
+                    ignorar_ocupacao_minima=False,
+                    ignorar_raio=False,
+                )
+
                 tent = {
+                    **avaliacao,
                     "etapa_fechamento": "4C_nao_exclusivos",
                     "tipo_tentativa": "cliente_nao_exclusivo",
                     "cliente_referencia": cliente,
                     "linha_ancora": anchor_id,
-                    "veiculo_tipo": veic["tipo"],
-                    "resultado_teste": "rejeitado",
-                    "motivo_reprovacao": "perfil_sem_disponibilidade_no_modo_frota",
+                    "resultado_teste": "aceito" if avaliacao["aceito"] else "rejeitado",
                 }
+
+                if not avaliacao["aceito"]:
+                    tent["motivo_reprovacao"] = _motivo_reprovacao(
+                        avaliacao,
+                        exigir_ocupacao=True,
+                        exigir_raio=True,
+                    )
+
                 ctx["tentativas_fechamento"].append(tent)
                 _contabilizar_tentativa(contadores_m4, tent)
+
+                if avaliacao["aceito"]:
+                    _registrar_manifesto(
+                        ctx=ctx,
+                        catalogo_veiculos=catalogo_veiculos,
+                        tipo_roteirizacao=tipo_roteirizacao,
+                        df_combo=combo_teste,
+                        avaliacao=avaliacao,
+                        origem_etapa="4C_nao_exclusivos",
+                        catalogo_idx=idx_original,
+                    )
+                    contadores_m4["qtd_manifestos_nao_exclusivos"] += 1
+                    fechou_iteracao = True
+                    fechado_cliente = True
+                    if precisa_oversized:
+                        manifestos_cliente_oversized += 1
+                        itens_manifestados_cliente += len(combo_teste)
+                        peso_manifestado_cliente += _obter_base_carga_oficial(combo_teste)
+                        print("[M4 OVERSIZED] manifesto fechado")
+                    break
+
+            if fechou_iteracao:
+                pool_loop = _filtrar_nao_alocados(pool_loop, ctx["ids_alocados"])
+                if not precisa_oversized:
+                    break
                 continue
-
-            avaliacao = _avaliar_combo_no_veiculo(
-                pool_cliente,
-                veic=veic,
-                ignorar_ocupacao_minima=False,
-                ignorar_raio=False,
-            )
-
-            tent = {
-                **avaliacao,
-                "etapa_fechamento": "4C_nao_exclusivos",
-                "tipo_tentativa": "cliente_nao_exclusivo",
-                "cliente_referencia": cliente,
-                "linha_ancora": anchor_id,
-                "resultado_teste": "aceito" if avaliacao["aceito"] else "rejeitado",
-            }
-
-            if not avaliacao["aceito"]:
-                tent["motivo_reprovacao"] = _motivo_reprovacao(
-                    avaliacao,
-                    exigir_ocupacao=True,
-                    exigir_raio=True,
-                )
-
-            ctx["tentativas_fechamento"].append(tent)
-            _contabilizar_tentativa(contadores_m4, tent)
-
-            if avaliacao["aceito"]:
-                _registrar_manifesto(
-                    ctx=ctx,
-                    catalogo_veiculos=catalogo_veiculos,
-                    tipo_roteirizacao=tipo_roteirizacao,
-                    df_combo=pool_cliente,
-                    avaliacao=avaliacao,
-                    origem_etapa="4C_nao_exclusivos",
-                    catalogo_idx=idx_original,
-                )
-                contadores_m4["qtd_manifestos_nao_exclusivos"] += 1
-                fechado = True
-                break
-
-        if not fechado:
-            continue
+            break
+        if cliente_oversized:
+            print("[M4 OVERSIZED] cliente oversized identificado")
+            saldo = _filtrar_nao_alocados(pool_cliente, ctx["ids_alocados"])
+            if len(saldo) > 0:
+                print("[M4 OVERSIZED] saldo enviado ao M5")
+                ctx["tentativas_fechamento"].append({
+                    "etapa_fechamento": "4C_nao_exclusivos",
+                    "tipo_tentativa": "cliente_nao_exclusivo",
+                    "cliente_referencia": cliente,
+                    "linha_ancora": anchor_id,
+                    "resultado_teste": "rejeitado",
+                    "motivo_reprovacao": "saldo_cliente_oversized_m4",
+                })
+            auditoria_oversized["total_clientes_oversized_m4"] += 1
+            auditoria_oversized["total_manifestos_gerados_de_clientes_oversized_m4"] += manifestos_cliente_oversized
+            auditoria_oversized["total_itens_manifestados_oversized_m4"] += itens_manifestados_cliente
+            auditoria_oversized["total_itens_saldo_oversized_m4"] += int(len(saldo))
+            peso_original = _obter_base_carga_oficial(pool_cliente)
+            peso_saldo = _obter_base_carga_oficial(saldo) if len(saldo) > 0 else 0.0
+            auditoria_oversized["total_peso_original_oversized_m4"] += peso_original
+            auditoria_oversized["total_peso_manifestado_oversized_m4"] += peso_manifestado_cliente
+            auditoria_oversized["total_peso_saldo_oversized_m4"] += peso_saldo
+            auditoria_oversized["clientes_oversized_m4"].append({
+                "cliente": cliente,
+                "destinatario": cliente,
+                "peso_total_cliente_original": peso_original,
+                "volume_total_cliente_original": float(pd.to_numeric(pool_cliente["vol_m3"], errors="coerce").fillna(0).sum()),
+                "qtd_itens_cliente_original": int(len(pool_cliente)),
+                "maior_perfil_viavel": str(maior_perfil_usado.get("tipo")) if maior_perfil_usado is not None else "",
+                "capacidade_peso_kg_maior_perfil": _num_safe(maior_perfil_usado.get("capacidade_peso_kg"), default=np.nan) if maior_perfil_usado is not None else np.nan,
+                "capacidade_vol_m3_maior_perfil": _num_safe(maior_perfil_usado.get("capacidade_vol_m3"), default=np.nan) if maior_perfil_usado is not None else np.nan,
+                "max_entregas_maior_perfil": _int_safe(maior_perfil_usado.get("max_entregas"), default=0) if maior_perfil_usado is not None else 0,
+                "ocupacao_minima_perc_maior_perfil": _num_safe(maior_perfil_usado.get("ocupacao_minima_perc"), default=OCUPACAO_MINIMA_PADRAO * 100) if maior_perfil_usado is not None else OCUPACAO_MINIMA_PADRAO * 100,
+                "ocupacao_maxima_perc_maior_perfil": _num_safe(maior_perfil_usado.get("ocupacao_maxima_perc"), default=OCUPACAO_MAXIMA_PADRAO * 100) if maior_perfil_usado is not None else OCUPACAO_MAXIMA_PADRAO * 100,
+                "qtd_manifestos_gerados": manifestos_cliente_oversized,
+                "documentos_manifestados": itens_manifestados_cliente,
+                "documentos_saldo": int(len(saldo)),
+                "peso_manifestado": peso_manifestado_cliente,
+                "peso_saldo": peso_saldo,
+                "motivo_saldo": "saldo_cliente_oversized_m4" if len(saldo) > 0 else "",
+            })
 
 
 # ============================================================
