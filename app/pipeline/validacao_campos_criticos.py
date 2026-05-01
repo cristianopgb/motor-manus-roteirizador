@@ -33,17 +33,53 @@ def _todos_vazios(row: pd.Series, candidatos: List[str]) -> bool:
     return all(is_valor_vazio_operacional(_valor_coluna(row, [c])) for c in candidatos)
 
 
-def validar_campos_criticos_vazios_pre_m1(df_raw: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, Any]]:
-    if df_raw is None or df_raw.empty:
+def validar_campos_criticos_vazios_pos_m1(df_tratado: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, Any]]:
+    if df_tratado is None or df_tratado.empty:
         auditoria = {
             "total_linhas_entrada": 0,
-            "total_linhas_validas_pre_m1": 0,
-            "total_linhas_rejeitadas_pre_m1": 0,
+            "total_linhas_validas_pos_m1": 0,
+            "total_linhas_rejeitadas_pos_m1": 0,
             "total_por_motivo": {},
+            "colunas_disponiveis_pos_m1": [],
+            "colunas_criticas_mapeadas": [],
+            "colunas_criticas_nao_mapeadas": [],
         }
         return pd.DataFrame(columns=[]), pd.DataFrame(columns=[]), auditoria
 
-    carteira = df_raw.copy()
+    carteira = df_tratado.copy()
+    grupos_criticos = {
+        "identificador": ["id_linha_pipeline", "nro_documento", "chave_linha_dataset"],
+        "destinatario": ["destinatario"],
+        "cidade": ["cidade"],
+        "uf": ["uf"],
+        "peso_calculado": ["peso_calculado"],
+        "dle": ["data_leadtime", "dle", "data_limite"],
+        "latitude_destinatario": ["latitude_destinatario"],
+        "longitude_destinatario": ["longitude_destinatario"],
+    }
+    colunas_disponiveis = set(carteira.columns)
+    colunas_criticas_mapeadas: List[str] = []
+    colunas_criticas_nao_mapeadas: List[str] = []
+    for candidatos in grupos_criticos.values():
+        mapeadas = [c for c in candidatos if c in colunas_disponiveis]
+        if mapeadas:
+            colunas_criticas_mapeadas.extend(mapeadas)
+        else:
+            colunas_criticas_nao_mapeadas.append(candidatos[0])
+
+    if colunas_criticas_nao_mapeadas:
+        auditoria = {
+            "erro_schema": "coluna_critica_nao_mapeada_pos_m1",
+            "total_linhas_entrada": int(len(carteira)),
+            "total_linhas_validas_pos_m1": 0,
+            "total_linhas_rejeitadas_pos_m1": 0,
+            "total_por_motivo": {},
+            "colunas_disponiveis_pos_m1": list(carteira.columns),
+            "colunas_criticas_mapeadas": sorted(set(colunas_criticas_mapeadas)),
+            "colunas_criticas_nao_mapeadas": sorted(set(colunas_criticas_nao_mapeadas)),
+        }
+        return carteira.reset_index(drop=True), pd.DataFrame(columns=[]), auditoria
+
     rejeitadas: List[Dict[str, Any]] = []
     validas_idx: List[int] = []
     total_por_motivo: Counter[str] = Counter()
@@ -51,21 +87,21 @@ def validar_campos_criticos_vazios_pre_m1(df_raw: pd.DataFrame) -> Tuple[pd.Data
     for idx, row in carteira.iterrows():
         motivos: List[str] = []
 
-        if _todos_vazios(row, ["id_linha_pipeline", "nro_documento", "Nro Doc.", "Nro Doc", "Nro Do", "chave_linha_dataset"]):
+        if _todos_vazios(row, ["id_linha_pipeline", "nro_documento", "chave_linha_dataset"]):
             motivos.append("identificador_linha_ausente")
-        if _todos_vazios(row, ["destinatario", "Destina"]):
+        if _todos_vazios(row, ["destinatario"]):
             motivos.append("destinatario_ausente")
-        if _todos_vazios(row, ["cidade", "Cida", "Cidade Dest."]):
+        if _todos_vazios(row, ["cidade"]):
             motivos.append("cidade_ausente")
-        if _todos_vazios(row, ["uf", "UF"]):
+        if _todos_vazios(row, ["uf"]):
             motivos.append("uf_ausente")
-        if _todos_vazios(row, ["peso_calculado", "Peso Calculo", "Peso Cálculo", "Peso C"]):
+        if _todos_vazios(row, ["peso_calculado"]):
             motivos.append("peso_calculado_ausente")
-        if _todos_vazios(row, ["data_leadtime", "D.L.E.", "DLE", "dle", "data_limite"]):
+        if _todos_vazios(row, ["data_leadtime", "dle", "data_limite"]):
             motivos.append("dle_ausente")
-        if _todos_vazios(row, ["latitude_destinatario", "Latitude", "latitude"]):
+        if _todos_vazios(row, ["latitude_destinatario"]):
             motivos.append("latitude_destinatario_ausente")
-        if _todos_vazios(row, ["longitude_destinatario", "Longitude", "longitude"]):
+        if _todos_vazios(row, ["longitude_destinatario"]):
             motivos.append("longitude_destinatario_ausente")
 
         if motivos:
@@ -73,11 +109,11 @@ def validar_campos_criticos_vazios_pre_m1(df_raw: pd.DataFrame) -> Tuple[pd.Data
             row_dict = row.to_dict()
             row_dict["status_triagem"] = "excecao"
             row_dict["grupo_saida"] = "excecao_triagem"
-            row_dict["status_linha_pipeline"] = "erro_dado_critico_pre_m1"
-            row_dict["origem_excecao"] = "validacao_campos_criticos_pre_m1"
+            row_dict["status_linha_pipeline"] = "erro_dado_critico_pos_m1"
+            row_dict["origem_excecao"] = "validacao_campos_criticos_pos_m1"
             row_dict["motivos_dados_criticos"] = motivos
             texto_motivos = "|".join(motivos)
-            row_dict["motivo_triagem"] = f"dados_criticos_ausentes_pre_m1: {texto_motivos}"
+            row_dict["motivo_triagem"] = f"dados_criticos_ausentes_pos_m1: {texto_motivos}"
             row_dict["motivo_nao_roteirizavel"] = row_dict["motivo_triagem"]
             rejeitadas.append(row_dict)
         else:
@@ -87,8 +123,11 @@ def validar_campos_criticos_vazios_pre_m1(df_raw: pd.DataFrame) -> Tuple[pd.Data
     df_rejeitadas = pd.DataFrame(rejeitadas)
     auditoria = {
         "total_linhas_entrada": int(len(carteira)),
-        "total_linhas_validas_pre_m1": int(len(df_validos)),
-        "total_linhas_rejeitadas_pre_m1": int(len(df_rejeitadas)),
+        "total_linhas_validas_pos_m1": int(len(df_validos)),
+        "total_linhas_rejeitadas_pos_m1": int(len(df_rejeitadas)),
         "total_por_motivo": dict(total_por_motivo),
+        "colunas_disponiveis_pos_m1": list(carteira.columns),
+        "colunas_criticas_mapeadas": sorted(set(colunas_criticas_mapeadas)),
+        "colunas_criticas_nao_mapeadas": sorted(set(colunas_criticas_nao_mapeadas)),
     }
     return df_validos, df_rejeitadas, auditoria
