@@ -11,7 +11,6 @@ from app.pipeline.m1_padronizacao import executar_m1_padronizacao
 from app.pipeline.m2_enriquecimento import executar_m2_enriquecimento
 from app.pipeline.m3_triagem import executar_m3_triagem
 from app.pipeline.m3_1_validacao_fronteira import executar_m3_1_validacao_fronteira
-from app.pipeline.validacao_campos_criticos import validar_campos_criticos_vazios_pos_m1
 from app.pipeline.m4_manifestos_fechados import executar_m4_manifestos_fechados
 from app.pipeline.m5_1_triagem_cidades import executar_m5_1_triagem_cidades
 from app.pipeline.m5_2_composicao_cidades import executar_m5_2_composicao_cidades
@@ -832,54 +831,6 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     auditoria_por_modulo["m1_padronizacao"] = auditoria_por_modulo.get("m1_padronizacao", 0) + total_m1
     auditoria_por_snapshot["m1_padronizacao"] = auditoria_por_snapshot.get("m1_padronizacao", 0) + total_m1
     _print_log(f"[AUDITORIA FLAT] snapshot=m1_padronizacao linhas={total_m1}")
-
-    # =========================================================================================
-    # Validação simples de dados críticos vazios (pós-M1)
-    # =========================================================================================
-    t0 = _agora()
-    df_carteira_tratada_validos, df_excecoes_dados_criticos_pos_m1, auditoria_dados_criticos_pos_m1 = validar_campos_criticos_vazios_pos_m1(
-        df_carteira_tratada
-    )
-    tempo_validacao_dados_criticos_pos_m1 = _duracao_ms(t0)
-    metricas_tempo["validacao_dados_criticos_pos_m1_ms"] = tempo_validacao_dados_criticos_pos_m1
-    _print_log(
-        f"[DADOS CRITICOS POS-M1] linhas rejeitadas={auditoria_dados_criticos_pos_m1.get('total_linhas_rejeitadas_pos_m1', 0)}",
-        force=True,
-    )
-    _print_log(f"[DADOS CRITICOS POS-M1] resumo motivos={auditoria_dados_criticos_pos_m1.get('total_por_motivo', {})}", force=True)
-    _print_log(
-        f"[DADOS CRITICOS POS-M1] colunas críticas mapeadas={auditoria_dados_criticos_pos_m1.get('colunas_criticas_mapeadas', [])}",
-        force=True,
-    )
-    logs.append(
-        _log(
-            modulo="validacao_campos_criticos_pos_m1",
-            status="ok",
-            mensagem="Validação de vazios críticos aplicada após o M1",
-            quantidade_entrada=_safe_len(df_carteira_tratada),
-            quantidade_saida=_safe_len(df_carteira_tratada_validos),
-            tempo_ms=tempo_validacao_dados_criticos_pos_m1,
-            extra=auditoria_dados_criticos_pos_m1,
-        )
-    )
-    if auditoria_dados_criticos_pos_m1.get("erro_schema") == "coluna_critica_nao_mapeada_pos_m1":
-        return {
-            "status": "erro",
-            "mensagem": "Falha de schema após M1: coluna crítica não mapeada.",
-            "pipeline_real_ate": "pos_m1",
-            "modo_resposta": "auditoria_m7_sequenciamento_entregas",
-            "cargas_excecao_triagem": [],
-            "nao_roteirizados": [],
-            "cargas_nao_alocadas": [],
-            "remanescentes": {
-                "nao_roteirizaveis_m3": [],
-                "excecoes_triagem": [],
-                "saldo_final_roteirizacao": [],
-            },
-            "auditoria_dados_criticos_pos_m1": auditoria_dados_criticos_pos_m1,
-            "logs": logs,
-        }
-    df_carteira_tratada = df_carteira_tratada_validos
 
     # =========================================================================================
     # M2
@@ -3460,13 +3411,6 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     aguardando_agendamento = _serializar_dataframe_para_records(df_aguardando_agendamento_m3, limit=None)
     excecoes_triagem = _serializar_dataframe_para_records(df_excecoes_triagem_m3, limit=None)
     agenda_vencida = _serializar_dataframe_para_records(df_agenda_vencida_m3, limit=None)
-    excecoes_pos_m1 = _serializar_dataframe_para_records(df_excecoes_dados_criticos_pos_m1, limit=None)
-    if excecoes_pos_m1:
-        excecoes_triagem = list(excecoes_triagem) + [r for r in excecoes_pos_m1 if r not in excecoes_triagem]
-        nao_roteirizaveis_m3 = list(nao_roteirizaveis_m3) + [r for r in excecoes_pos_m1 if r not in nao_roteirizaveis_m3]
-    nao_roteirizados = []
-    nao_roteirizados.extend(saldo_final_roteirizacao)
-    nao_roteirizados.extend([r for r in nao_roteirizaveis_m3 if r not in nao_roteirizados])
 
     manifestos_fechados: List[Dict[str, Any]] = []
     manifestos_compostos: List[Dict[str, Any]] = []
@@ -3526,8 +3470,8 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
                 "total_roteirizavel_m3": _safe_len(df_carteira_roteirizavel),
                 "agendamento_futuro": _safe_len(df_agendamento_futuro_m3),
                 "aguardando_agendamento": _safe_len(df_aguardando_agendamento_m3),
-                "excecoes_triagem": len(excecoes_triagem),
-                "nao_roteirizaveis_m3": len(nao_roteirizaveis_m3),
+                "excecoes_triagem": _safe_len(df_excecoes_triagem_m3),
+                "nao_roteirizaveis_m3": _safe_len(df_nao_roteirizaveis_m3),
                 "saldo_final_roteirizacao": _safe_len(df_remanescente_m6_2),
             },
         },
@@ -3537,7 +3481,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         "itens_manifestos_sequenciados_m7": itens_manifestos_sequenciados_m7,
         "manifestos_sequenciamento_resumo_m7": manifestos_sequenciamento_resumo_m7,
         "paradas_m7": paradas_m7,
-        "nao_roteirizados": nao_roteirizados,
+        "nao_roteirizados": saldo_final_roteirizacao,
         "cargas_agendamento_futuro": agendamento_futuro,
         "cargas_agenda_vencida": agenda_vencida,
         "cargas_excecao_triagem": excecoes_triagem,
@@ -3552,9 +3496,8 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         },
         "total_carteira": _safe_len(contexto.df_carteira_raw),
         "total_roteirizado": _safe_len(df_itens_manifestos_sequenciados_m7),
-        "total_nao_roteirizado": len(nao_roteirizados),
+        "total_nao_roteirizado": _safe_len(df_remanescente_m6_2),
         "auditoria_reprocessamento_etapas": auditoria_reprocessamento_etapas,
-        "auditoria_dados_criticos_pos_m1": auditoria_dados_criticos_pos_m1,
     }
 
     if retornar_auditoria_interna:
