@@ -20,6 +20,8 @@ from app.pipeline.m5_common import (
     qtd_paradas,
     ocupacao_perc,
     grupo_respeita_restricao_veiculo,
+    buscar_fechamento_territorial_oversized_m5,
+    TOLERANCIA_CORREDOR_MESMA_CIDADE,
 )
 
 
@@ -252,6 +254,32 @@ def _validar_fechamento(df_itens: pd.DataFrame, vehicle_row: pd.Series) -> Tuple
     if ocup < ocup_min:
         return False, "abaixo_ocupacao_minima"
 
+    return True, "ok"
+
+
+def _metricas_corredor_cidade(df_itens: pd.DataFrame) -> Tuple[Optional[int], Optional[int], Optional[int]]:
+    if df_itens is None or df_itens.empty or "corredor_30g_idx" not in df_itens.columns:
+        return None, None, None
+    serie = pd.to_numeric(df_itens["corredor_30g_idx"], errors="coerce").dropna().astype(int)
+    serie = serie[(serie >= 1) & (serie <= 12)]
+    if serie.empty:
+        return None, None, None
+    corredor_min = int(serie.min())
+    corredor_max = int(serie.max())
+    return corredor_min, corredor_max, int(corredor_max - corredor_min)
+
+
+def _validar_fechamento_fallback_cidade(
+    df_itens: pd.DataFrame,
+    vehicle_row: pd.Series,
+    tolerancia_corredor: int,
+) -> Tuple[bool, str]:
+    ok, motivo = _validar_fechamento(df_itens, vehicle_row)
+    if not ok:
+        return ok, motivo
+    _, _, diff_corredor = _metricas_corredor_cidade(df_itens)
+    if diff_corredor is not None and diff_corredor > int(tolerancia_corredor):
+        return False, "corredor_distante"
     return True, "ok"
 
 
@@ -756,6 +784,10 @@ def executar_m5_2_composicao_cidades(
     agendadas_incluidas_na_base_prioritaria_total = 0
     agendadas_excluidas_pelo_limite_total = 0
     t0_m5_2 = time.perf_counter()
+    fallback_tentado = 0
+    fallback_fechado = 0
+    fallback_sem_fechamento = 0
+    fallback_corredor_flexibilizado = 0
 
     cidades_keys = _ordenar_cidades_por_massa(saldo)
 
@@ -785,6 +817,51 @@ def executar_m5_2_composicao_cidades(
             agendadas_incluidas_na_base_prioritaria_total += int(ag_inc)
             agendadas_excluidas_pelo_limite_total += int(ag_exc)
 
+            if candidato is None or vehicle_row is None:
+                fallback_tentado += 1
+                candidato_fb, vehicle_row_fb, _ = buscar_fechamento_territorial_oversized_m5(
+                    df_grupo=city_df,
+                    veiculos_elegiveis=perfis_elegiveis,
+                    suffix=suffix,
+                    escopo="cidade",
+                    validar_fechamento_fn=lambda df_itens, vehicle_row, tolerancia_corredor, **kwargs: _validar_fechamento_fallback_cidade(
+                        df_itens=df_itens, vehicle_row=vehicle_row, tolerancia_corredor=tolerancia_corredor
+                    ),
+                    tolerancia_corredor=TOLERANCIA_CORREDOR_MESMA_CIDADE,
+                )
+                if candidato_fb is not None and vehicle_row_fb is not None:
+                    fallback_fechado += 1
+                    corr_min, corr_max, diff_corr = _metricas_corredor_cidade(candidato_fb)
+                    corredor_flex = bool(diff_corr is not None and diff_corr > 1 and diff_corr <= TOLERANCIA_CORREDOR_MESMA_CIDADE)
+                    if corredor_flex:
+                        fallback_corredor_flexibilizado += 1
+                    tentativas.append(
+                        {
+                            "cidade": cidade_key,
+                            "uf": uf_key,
+                            "tentativa_idx": None,
+                            "blocos_considerados": 0,
+                            "veiculo_tipo_tentado": safe_text(vehicle_row_fb.get("tipo")),
+                            "veiculo_perfil_tentado": safe_text(vehicle_row_fb.get("perfil")),
+                            "resultado": "fallback_fechado",
+                            "motivo": "fallback_territorial_oversized",
+                            "qtd_itens_candidato": int(len(candidato_fb)),
+                            "qtd_paradas_candidato": qtd_paradas(candidato_fb),
+                            "peso_total_candidato": round(peso_total(candidato_fb), 3),
+                            "peso_kg_total_candidato": round(peso_auditoria_total(candidato_fb), 3),
+                            "volume_total_candidato": round(volume_total(candidato_fb), 3),
+                            "km_referencia_candidato": round(km_referencia(candidato_fb), 2),
+                            "ocupacao_perc_candidato": round(ocupacao_perc(candidato_fb, vehicle_row_fb), 2),
+                            "corredor_min": corr_min,
+                            "corredor_max": corr_max,
+                            "diff_corredor_max": diff_corr,
+                            "tolerancia_corredor_usada": int(TOLERANCIA_CORREDOR_MESMA_CIDADE),
+                            "corredor_flexibilizado_mesma_cidade": corredor_flex,
+                        }
+                    )
+                    candidato, vehicle_row = candidato_fb, vehicle_row_fb
+                else:
+                    fallback_sem_fechamento += 1
             if candidato is None or vehicle_row is None:
                 tentativas.append(
                     {
@@ -880,6 +957,10 @@ def executar_m5_2_composicao_cidades(
         "tentativas_totais_m5_2_depois_prioridade": int(len(df_tentativas_m5_2)),
         "tentativas_totais_m5_2": int(len(df_tentativas_m5_2)),
         "tempo_execucao_m5_2_ms": round((time.perf_counter() - t0_m5_2) * 1000, 2),
+        "fallback_territorial_oversized_m5_2_tentado": int(fallback_tentado),
+        "fallback_territorial_oversized_m5_2_fechado": int(fallback_fechado),
+        "fallback_territorial_oversized_m5_2_sem_fechamento": int(fallback_sem_fechamento),
+        "fallback_territorial_oversized_m5_2_corredor_flexibilizado": int(fallback_corredor_flexibilizado),
     }
 
     outputs_m5_2 = {

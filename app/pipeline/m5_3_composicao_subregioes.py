@@ -19,6 +19,8 @@ from app.pipeline.m5_common import (
     volume_total,
     ocupacao_perc,
     grupo_respeita_restricao_veiculo,
+    buscar_fechamento_territorial_oversized_m5,
+    TOLERANCIA_CORREDOR_SUBREGIAO,
 )
 
 
@@ -336,6 +338,7 @@ def _validar_hard_constraints(
     vehicle_row: pd.Series,
     suffix: str,
     corredor_ancora: Optional[int] = None,
+    tolerancia_corredor: int = 1,
 ) -> Tuple[bool, str, pd.DataFrame]:
     if df_itens.empty:
         return False, "grupo_vazio", df_itens.copy()
@@ -378,7 +381,7 @@ def _validar_hard_constraints(
         return False, "excede_max_km_referencia", candidato
 
     _, diff_corredor_max = _metricas_corredor(candidato, corredor_ancora)
-    if diff_corredor_max is not None and diff_corredor_max > 1:
+    if diff_corredor_max is not None and diff_corredor_max > int(tolerancia_corredor):
         return False, "corredor_distante", candidato
 
     km_total_estimado, _ = _estimar_km_total_candidato(candidato)
@@ -400,12 +403,14 @@ def _validar_fechamento(
     vehicle_row: pd.Series,
     suffix: str,
     corredor_ancora: Optional[int] = None,
+    tolerancia_corredor: int = 1,
 ) -> Tuple[bool, str, pd.DataFrame]:
     ok_hard, motivo_hard, candidato_ajustado = _validar_hard_constraints(
         df_itens=df_itens,
         vehicle_row=vehicle_row,
         suffix=suffix,
         corredor_ancora=corredor_ancora,
+        tolerancia_corredor=tolerancia_corredor,
     )
     if not ok_hard:
         return False, motivo_hard, candidato_ajustado
@@ -975,6 +980,9 @@ def executar_m5_3_composicao_subregioes(
     chamadas_prioritarias_total = 0
     fechamentos_agendada_total = 0
     t0_m5_3 = time.perf_counter()
+    fallback_tentado = 0
+    fallback_fechado = 0
+    fallback_sem_fechamento = 0
 
     subregioes_keys = _ordenar_subregioes_por_massa(saldo)
 
@@ -1006,6 +1014,27 @@ def executar_m5_3_composicao_subregioes(
             chamadas_prioritarias_total += int(chamadas_prioritarias)
             fechamentos_agendada_total += int(fechamentos_agendada)
 
+            if candidato is None or vehicle_row is None:
+                fallback_tentado += 1
+                candidato_fb, vehicle_row_fb, _ = buscar_fechamento_territorial_oversized_m5(
+                    df_grupo=pool_df,
+                    veiculos_elegiveis=perfis_elegiveis,
+                    suffix=suffix,
+                    escopo="subregiao",
+                    validar_fechamento_fn=lambda df_itens, vehicle_row, suffix, tolerancia_corredor, **kwargs: _validar_fechamento(
+                        df_itens=df_itens,
+                        vehicle_row=vehicle_row,
+                        suffix=suffix,
+                        corredor_ancora=_obter_corredor_ancora(df_itens),
+                        tolerancia_corredor=tolerancia_corredor,
+                    ),
+                    tolerancia_corredor=TOLERANCIA_CORREDOR_SUBREGIAO,
+                )
+                if candidato_fb is not None and vehicle_row_fb is not None:
+                    fallback_fechado += 1
+                    candidato, vehicle_row = candidato_fb, vehicle_row_fb
+                else:
+                    fallback_sem_fechamento += 1
             if candidato is None or vehicle_row is None:
                 tentativas.append(
                     {
@@ -1129,6 +1158,9 @@ def executar_m5_3_composicao_subregioes(
         "tentativas_totais_m5_3b_antes_prioridade": int(len(df_tentativas_m5_3)),
         "tentativas_totais_m5_3b_depois_prioridade": int(len(df_tentativas_m5_3)),
         "tempo_execucao_m5_3b_ms": round((time.perf_counter() - t0_m5_3) * 1000, 2),
+        "fallback_territorial_oversized_m5_3_tentado": int(fallback_tentado),
+        "fallback_territorial_oversized_m5_3_fechado": int(fallback_fechado),
+        "fallback_territorial_oversized_m5_3_sem_fechamento": int(fallback_sem_fechamento),
     }
 
     outputs_m5_3 = {

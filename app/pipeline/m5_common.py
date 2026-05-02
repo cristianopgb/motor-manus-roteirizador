@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -10,6 +10,59 @@ import pandas as pd
 
 OCUPACAO_MINIMA_PADRAO = 0.70
 OCUPACAO_MAXIMA_PADRAO = 1.00
+TOLERANCIA_CORREDOR_MESMA_CIDADE = 2
+TOLERANCIA_CORREDOR_SUBREGIAO = 1
+TOLERANCIA_CORREDOR_MESORREGIAO = 1
+
+
+def buscar_fechamento_territorial_oversized_m5(
+    df_grupo: pd.DataFrame,
+    veiculos_elegiveis: pd.DataFrame,
+    suffix: str,
+    escopo: str,
+    validar_fechamento_fn: Callable[..., Tuple[Any, ...]],
+    tolerancia_corredor: int,
+) -> Tuple[Optional[pd.DataFrame], Optional[pd.Series], Dict[str, Any]]:
+    auditoria: Dict[str, Any] = {
+        "escopo": escopo,
+        "qtd_itens_grupo": int(len(df_grupo)),
+        "peso_total_grupo": round(float(pd.to_numeric(df_grupo.get("peso_calculado", 0), errors="coerce").fillna(0).sum()), 3),
+    }
+    if df_grupo is None or df_grupo.empty or veiculos_elegiveis is None or veiculos_elegiveis.empty:
+        auditoria["motivo_final"] = "sem_grupo_ou_veiculos"
+        return None, None, auditoria
+    grupo_ordenado = df_grupo.copy().reset_index(drop=True)
+    veiculos_ordenados = veiculos_elegiveis.copy()
+    for col in ["capacidade_peso_kg", "capacidade_vol_m3", "max_entregas"]:
+        if col not in veiculos_ordenados.columns:
+            veiculos_ordenados[col] = 0
+        veiculos_ordenados[col] = pd.to_numeric(veiculos_ordenados[col], errors="coerce").fillna(0)
+    veiculos_ordenados = veiculos_ordenados.sort_values(
+        by=["capacidade_peso_kg", "capacidade_vol_m3", "max_entregas"],
+        ascending=[False, False, False],
+        kind="mergesort",
+    )
+    for _, vehicle_row in veiculos_ordenados.iterrows():
+        candidato = grupo_ordenado.copy()
+        while not candidato.empty:
+            ret = validar_fechamento_fn(
+                df_itens=candidato,
+                vehicle_row=vehicle_row,
+                suffix=suffix,
+                tolerancia_corredor=tolerancia_corredor,
+            )
+            ok = bool(ret[0]) if ret else False
+            motivo = ret[1] if len(ret) > 1 else "falha_validacao"
+            candidato_validado = ret[2] if len(ret) > 2 and isinstance(ret[2], pd.DataFrame) else candidato
+            if ok:
+                auditoria["motivo_final"] = "fechado"
+                auditoria["perfil_testado"] = safe_text(vehicle_row.get("perfil"))
+                return candidato_validado.reset_index(drop=True), vehicle_row, auditoria
+            if motivo == "abaixo_ocupacao_minima":
+                break
+            candidato = candidato.iloc[:-1].copy().reset_index(drop=True)
+    auditoria["motivo_final"] = "sem_fechamento"
+    return None, None, auditoria
 
 
 # =========================================================================================
