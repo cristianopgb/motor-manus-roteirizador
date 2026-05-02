@@ -19,6 +19,8 @@ from app.pipeline.m5_common import (
     volume_total,
     ocupacao_perc,
     grupo_respeita_restricao_veiculo,
+    buscar_fechamento_territorial_oversized_m5,
+    TOLERANCIA_CORREDOR_MESORREGIAO,
 )
 
 
@@ -355,6 +357,7 @@ def _validar_fechamento(
     df_itens: pd.DataFrame,
     vehicle_row: pd.Series,
     suffix: str,
+    tolerancia_corredor: int = 2,
 ) -> Tuple[bool, str, pd.DataFrame, Dict[str, Any]]:
     ok_hard, motivo_hard, candidato_ajustado = _validar_hard_constraints(
         df_itens=df_itens,
@@ -387,7 +390,7 @@ def _validar_fechamento(
         }
 
     corredor_ancora, corredores_considerados, diff_corredor_max = _metricas_corredor(candidato_ajustado)
-    if diff_corredor_max is not None and diff_corredor_max > 2:
+    if diff_corredor_max is not None and diff_corredor_max > int(tolerancia_corredor):
         km_estimado, fonte_km_estimado = _km_total_estimado_candidato(candidato_ajustado)
         return False, "corredor_distante", candidato_ajustado, {
             "km_total_estimado_candidato": km_estimado,
@@ -968,6 +971,9 @@ def executar_m5_4b_composicao_mesorregioes(
     chamadas_prioritarias_total = 0
     fechamentos_agendada_total = 0
     t0_m5_4 = time.perf_counter()
+    fallback_tentado = 0
+    fallback_fechado = 0
+    fallback_sem_fechamento = 0
 
     mesorregioes_keys = _ordenar_mesorregioes_por_massa(saldo)
 
@@ -1011,6 +1017,23 @@ def executar_m5_4b_composicao_mesorregioes(
             chamadas_prioritarias_total += int(chamadas_prioritarias)
             fechamentos_agendada_total += int(fechamentos_agendada)
 
+            if candidato is None or vehicle_row is None:
+                fallback_tentado += 1
+                candidato_fb, vehicle_row_fb, _ = buscar_fechamento_territorial_oversized_m5(
+                    df_grupo=pool_df,
+                    veiculos_elegiveis=perfis_elegiveis,
+                    suffix=suffix,
+                    escopo="mesorregiao",
+                    validar_fechamento_fn=lambda df_itens, vehicle_row, suffix, tolerancia_corredor, **kwargs: _validar_fechamento(
+                        df_itens=df_itens, vehicle_row=vehicle_row, suffix=suffix, tolerancia_corredor=tolerancia_corredor
+                    ),
+                    tolerancia_corredor=TOLERANCIA_CORREDOR_MESORREGIAO,
+                )
+                if candidato_fb is not None and vehicle_row_fb is not None:
+                    fallback_fechado += 1
+                    candidato, vehicle_row = candidato_fb, vehicle_row_fb
+                else:
+                    fallback_sem_fechamento += 1
             if candidato is None or vehicle_row is None:
                 tentativas.append(
                     {
@@ -1112,6 +1135,9 @@ def executar_m5_4b_composicao_mesorregioes(
         "tentativas_totais_m5_4b_antes_prioridade": int(len(df_tentativas_m5_4)),
         "tentativas_totais_m5_4b_depois_prioridade": int(len(df_tentativas_m5_4)),
         "tempo_execucao_m5_4b_ms": round((time.perf_counter() - t0_m5_4) * 1000, 2),
+        "fallback_territorial_oversized_m5_4_tentado": int(fallback_tentado),
+        "fallback_territorial_oversized_m5_4_fechado": int(fallback_fechado),
+        "fallback_territorial_oversized_m5_4_sem_fechamento": int(fallback_sem_fechamento),
     }
 
     outputs_m5_4 = {
