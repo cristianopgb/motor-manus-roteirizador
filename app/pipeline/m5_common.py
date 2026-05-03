@@ -552,6 +552,7 @@ def precalcular_ordenacao_m5(df: pd.DataFrame, suffix: str) -> pd.DataFrame:
     temp[f"_ranking_ord_{suffix}"] = ranking
     temp[f"_km_ord_{suffix}"] = km
     temp[f"_peso_ord_{suffix}"] = -peso
+    temp[f"_agenda_ord_{suffix}"] = (~temp["flag_agendada_roteirizavel"].fillna(False).astype(bool)).astype(int)
 
     return temp
 
@@ -567,6 +568,7 @@ def ordenar_operacional_m5(df: pd.DataFrame, suffix: str) -> pd.DataFrame:
     return (
         df.sort_values(
             by=[
+                f"_agenda_ord_{suffix}",
                 f"_bucket_{suffix}",
                 f"_prioridade_ord_{suffix}",
                 f"_folga_ord_{suffix}",
@@ -575,7 +577,7 @@ def ordenar_operacional_m5(df: pd.DataFrame, suffix: str) -> pd.DataFrame:
                 f"_peso_ord_{suffix}",
                 f"_id_str_{suffix}",
             ],
-            ascending=[True, True, True, True, True, True, True],
+            ascending=[True, True, True, True, True, True, True, True],
             kind="mergesort",
         )
         .reset_index(drop=True)
