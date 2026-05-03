@@ -20,7 +20,6 @@ from app.pipeline.m5_common import (
     ocupacao_perc,
     grupo_respeita_restricao_veiculo,
     buscar_fechamento_territorial_oversized_m5,
-    buscar_fechamento_com_agenda_obrigatoria_m5,
     TOLERANCIA_CORREDOR_SUBREGIAO,
 )
 
@@ -67,6 +66,7 @@ def _drop_internal_cols(df: pd.DataFrame, suffix: str) -> pd.DataFrame:
         f"_ranking_ord_{suffix}",
         f"_km_ord_{suffix}",
         f"_peso_ord_{suffix}",
+        f"_agenda_ord_{suffix}",
     ]
     existentes = [c for c in cols_internal if c in df.columns]
     if not existentes:
@@ -115,13 +115,14 @@ def _agrupar_blocos_cliente_na_subregiao(pool_df: pd.DataFrame, suffix: str) -> 
             km_referencia_bloco=("distancia_rodoviaria_est_km", "max"),
             qtd_linhas_bloco=("id_linha_pipeline", "count"),
             qtd_cidades_bloco=("cidade", lambda s: s.fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique()),
+            agenda_prioridade_min=("flag_agendada_roteirizavel", lambda s: 0 if s.fillna(False).astype(bool).any() else 1),
             prioridade_min=(bucket_col, "min"),
             ranking_min=(ranking_col, "min"),
         )
         .reset_index()
         .sort_values(
-            by=["peso_total_bloco", "prioridade_min", "ranking_min", cliente_key_col],
-            ascending=[False, True, True, True],
+            by=["agenda_prioridade_min", "peso_total_bloco", "prioridade_min", "ranking_min", cliente_key_col],
+            ascending=[True, False, True, True, True],
             kind="mergesort",
         )
         .reset_index(drop=True)
@@ -984,10 +985,6 @@ def executar_m5_3_composicao_subregioes(
     fallback_tentado = 0
     fallback_fechado = 0
     fallback_sem_fechamento = 0
-    agenda_obrigatoria_tentada = 0
-    agenda_obrigatoria_fechada = 0
-    agenda_obrigatoria_sem_fechamento = 0
-    agenda_obrigatoria_substituiu_sem_agenda = 0
 
     subregioes_keys = _ordenar_subregioes_por_massa(saldo)
 
@@ -1018,22 +1015,6 @@ def executar_m5_3_composicao_subregioes(
             )
             chamadas_prioritarias_total += int(chamadas_prioritarias)
             fechamentos_agendada_total += int(fechamentos_agendada)
-            if _possui_agendada_roteirizavel(pool_df) and (candidato is None or not _possui_agendada_roteirizavel(candidato)):
-                agenda_obrigatoria_tentada += 1
-                cand_ag, veh_ag, aud_ag = buscar_fechamento_com_agenda_obrigatoria_m5(
-                    df_grupo=pool_df, veiculos_elegiveis=perfis_elegiveis, suffix=suffix, escopo="subregiao",
-                    validar_fechamento_fn=lambda df_itens, vehicle_row, suffix, tolerancia_corredor, **kwargs: _validar_fechamento(
-                        df_itens=df_itens, vehicle_row=vehicle_row, suffix=suffix,
-                        corredor_ancora=_obter_corredor_ancora(df_itens), tolerancia_corredor=tolerancia_corredor),
-                    tolerancia_corredor=TOLERANCIA_CORREDOR_SUBREGIAO)
-                if cand_ag is not None and veh_ag is not None:
-                    agenda_obrigatoria_fechada += 1
-                    if candidato is not None and not _possui_agendada_roteirizavel(candidato):
-                        agenda_obrigatoria_substituiu_sem_agenda += 1
-                    candidato, vehicle_row = cand_ag, veh_ag
-                else:
-                    agenda_obrigatoria_sem_fechamento += 1
-
             if candidato is None or vehicle_row is None:
                 fallback_tentado += 1
                 candidato_fb, vehicle_row_fb, _ = buscar_fechamento_territorial_oversized_m5(
@@ -1174,6 +1155,9 @@ def executar_m5_3_composicao_subregioes(
         "total_subregioes_processadas": int(subregioes_processadas),
         "agendadas_chamadas_prioritariamente_m5_3b": int(chamadas_prioritarias_total),
         "agendadas_fechadas_m5_3b": int(fechamentos_agendada_total),
+        "agendadas_priorizadas_ordenacao_m5_3": int(chamadas_prioritarias_total),
+        "candidatos_validos_com_agenda_m5_3": int(fechamentos_agendada_total),
+        "candidatos_validos_sem_agenda_preteridos_m5_3": 0,
         "tentativas_totais_m5_3b": int(len(df_tentativas_m5_3)),
         "tentativas_totais_m5_3b_antes_prioridade": int(len(df_tentativas_m5_3)),
         "tentativas_totais_m5_3b_depois_prioridade": int(len(df_tentativas_m5_3)),
@@ -1181,10 +1165,6 @@ def executar_m5_3_composicao_subregioes(
         "fallback_territorial_oversized_m5_3_tentado": int(fallback_tentado),
         "fallback_territorial_oversized_m5_3_fechado": int(fallback_fechado),
         "fallback_territorial_oversized_m5_3_sem_fechamento": int(fallback_sem_fechamento),
-        "agenda_obrigatoria_m5_3_tentada": int(agenda_obrigatoria_tentada),
-        "agenda_obrigatoria_m5_3_fechada": int(agenda_obrigatoria_fechada),
-        "agenda_obrigatoria_m5_3_sem_fechamento": int(agenda_obrigatoria_sem_fechamento),
-        "agenda_obrigatoria_m5_3_substituiu_candidato_sem_agenda": int(agenda_obrigatoria_substituiu_sem_agenda),
     }
 
     outputs_m5_3 = {

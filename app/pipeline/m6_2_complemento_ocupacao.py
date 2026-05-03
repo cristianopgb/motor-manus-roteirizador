@@ -277,6 +277,8 @@ def executar_m6_2_complemento_ocupacao(
 
     tentativas: List[Dict[str, Any]] = []
     movimentos_aceitos: List[Dict[str, Any]] = []
+    remanescentes_agendados_priorizados_m6_2 = 0
+    remanescentes_agendados_incluidos_m6_2 = 0
 
     for manifesto_id in manifestos_alvo:
         row_manifesto = df_manifestos.loc[df_manifestos["manifesto_id"] == manifesto_id].head(1)
@@ -401,6 +403,8 @@ def executar_m6_2_complemento_ocupacao(
                     continue
 
                 candidatos_ordenados = _ordenar_candidatos_por_prioridade_operacional(candidatos)
+                if "flag_agendada_roteirizavel" in candidatos_ordenados.columns and candidatos_ordenados["flag_agendada_roteirizavel"].fillna(False).astype(bool).any():
+                    remanescentes_agendados_priorizados_m6_2 += 1
 
                 for _, item_row in candidatos_ordenados.iterrows():
                     manifesto = df_manifestos.loc[df_manifestos["manifesto_id"] == manifesto_id].head(1).iloc[0].to_dict()
@@ -436,6 +440,8 @@ def executar_m6_2_complemento_ocupacao(
 
                     if not valido:
                         continue
+                    if bool(item_row.get("flag_agendada_roteirizavel", False)):
+                        remanescentes_agendados_incluidos_m6_2 += 1
 
                     houve_movimento_neste_manifesto = True
                     aceitou_algum_item_neste_ciclo = True
@@ -522,6 +528,9 @@ def executar_m6_2_complemento_ocupacao(
         "itens_adicionados_a_manifestos_m6_2": int(
             len(df_itens.loc[df_itens["flag_otimizado_m6_2"] == True])
         ),
+        "remanescentes_agendados_priorizados_m6_2": int(remanescentes_agendados_priorizados_m6_2),
+        "remanescentes_agendados_incluidos_m6_2": int(remanescentes_agendados_incluidos_m6_2),
+        "remanescentes_agendados_sem_encaixe_m6_2": int(max(0, int(df_remanescente["flag_agendada_roteirizavel"].fillna(False).astype(bool).sum()) if "flag_agendada_roteirizavel" in df_remanescente.columns else 0)),
         "caminhos_pipeline": caminhos_pipeline or {},
     }
 
@@ -746,6 +755,9 @@ def _ordenar_candidatos_por_prioridade_operacional(df: pd.DataFrame) -> pd.DataF
 
     out = df.copy()
     out["agendada"] = out["agendada"].fillna(False).astype(bool)
+    if "flag_agendada_roteirizavel" not in out.columns:
+        out["flag_agendada_roteirizavel"] = out["agendada"]
+    out["flag_agendada_roteirizavel"] = out["flag_agendada_roteirizavel"].fillna(False).astype(bool)
     out["folga_dias"] = pd.to_numeric(out["folga_dias"], errors="coerce")
 
     def _grupo_folga(valor: Any) -> int:
@@ -756,13 +768,13 @@ def _ordenar_candidatos_por_prioridade_operacional(df: pd.DataFrame) -> pd.DataF
             return 0
         return 1
 
-    out["ord_agendada"] = np.where(out["agendada"] == True, 0, 1)
+    out["ord_agendada_roteirizavel"] = np.where(out["flag_agendada_roteirizavel"] == True, 0, 1)
     out["ord_grupo_folga"] = out["folga_dias"].apply(_grupo_folga)
     out["ord_folga"] = out["folga_dias"].fillna(999999)
 
     out = out.sort_values(
         by=[
-            "ord_agendada",
+            "ord_agendada_roteirizavel",
             "ord_grupo_folga",
             "ord_folga",
             "peso_calculado",
