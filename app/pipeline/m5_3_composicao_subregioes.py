@@ -20,6 +20,7 @@ from app.pipeline.m5_common import (
     ocupacao_perc,
     grupo_respeita_restricao_veiculo,
     buscar_fechamento_territorial_oversized_m5,
+    buscar_fechamento_com_agenda_obrigatoria_m5,
     TOLERANCIA_CORREDOR_SUBREGIAO,
 )
 
@@ -983,6 +984,10 @@ def executar_m5_3_composicao_subregioes(
     fallback_tentado = 0
     fallback_fechado = 0
     fallback_sem_fechamento = 0
+    agenda_obrigatoria_tentada = 0
+    agenda_obrigatoria_fechada = 0
+    agenda_obrigatoria_sem_fechamento = 0
+    agenda_obrigatoria_substituiu_sem_agenda = 0
 
     subregioes_keys = _ordenar_subregioes_por_massa(saldo)
 
@@ -1013,6 +1018,21 @@ def executar_m5_3_composicao_subregioes(
             )
             chamadas_prioritarias_total += int(chamadas_prioritarias)
             fechamentos_agendada_total += int(fechamentos_agendada)
+            if _possui_agendada_roteirizavel(pool_df) and (candidato is None or not _possui_agendada_roteirizavel(candidato)):
+                agenda_obrigatoria_tentada += 1
+                cand_ag, veh_ag, aud_ag = buscar_fechamento_com_agenda_obrigatoria_m5(
+                    df_grupo=pool_df, veiculos_elegiveis=perfis_elegiveis, suffix=suffix, escopo="subregiao",
+                    validar_fechamento_fn=lambda df_itens, vehicle_row, suffix, tolerancia_corredor, **kwargs: _validar_fechamento(
+                        df_itens=df_itens, vehicle_row=vehicle_row, suffix=suffix,
+                        corredor_ancora=_obter_corredor_ancora(df_itens), tolerancia_corredor=tolerancia_corredor),
+                    tolerancia_corredor=TOLERANCIA_CORREDOR_SUBREGIAO)
+                if cand_ag is not None and veh_ag is not None:
+                    agenda_obrigatoria_fechada += 1
+                    if candidato is not None and not _possui_agendada_roteirizavel(candidato):
+                        agenda_obrigatoria_substituiu_sem_agenda += 1
+                    candidato, vehicle_row = cand_ag, veh_ag
+                else:
+                    agenda_obrigatoria_sem_fechamento += 1
 
             if candidato is None or vehicle_row is None:
                 fallback_tentado += 1
@@ -1161,6 +1181,10 @@ def executar_m5_3_composicao_subregioes(
         "fallback_territorial_oversized_m5_3_tentado": int(fallback_tentado),
         "fallback_territorial_oversized_m5_3_fechado": int(fallback_fechado),
         "fallback_territorial_oversized_m5_3_sem_fechamento": int(fallback_sem_fechamento),
+        "agenda_obrigatoria_m5_3_tentada": int(agenda_obrigatoria_tentada),
+        "agenda_obrigatoria_m5_3_fechada": int(agenda_obrigatoria_fechada),
+        "agenda_obrigatoria_m5_3_sem_fechamento": int(agenda_obrigatoria_sem_fechamento),
+        "agenda_obrigatoria_m5_3_substituiu_candidato_sem_agenda": int(agenda_obrigatoria_substituiu_sem_agenda),
     }
 
     outputs_m5_3 = {
