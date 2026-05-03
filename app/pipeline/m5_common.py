@@ -319,7 +319,33 @@ def normalize_saldo_m5(
         if col in saldo.columns:
             saldo[col] = pd.to_numeric(saldo[col], errors="coerce")
 
-    bool_cols = ["agendada", "flag_agendada_roteirizavel", "veiculo_exclusivo", "veiculo_exclusivo_flag"]
+    ensure_column(saldo, "data_agenda", pd.NaT)
+    if "data_agenda" in saldo.columns:
+        serie_data_agenda = saldo["data_agenda"].copy()
+        mask_str = serie_data_agenda.map(lambda v: isinstance(v, str))
+        convertido = pd.to_datetime(serie_data_agenda, errors="coerce")
+        if bool(mask_str.any()):
+            convertido.loc[mask_str] = pd.to_datetime(
+                serie_data_agenda.loc[mask_str],
+                dayfirst=True,
+                errors="coerce",
+            )
+        saldo["data_agenda"] = convertido
+    saldo["flag_tem_data_agenda"] = saldo["data_agenda"].notna()
+    saldo["agendada"] = saldo["flag_tem_data_agenda"]
+    folga_num = pd.to_numeric(saldo["folga_dias"], errors="coerce")
+    if "status_triagem" in saldo.columns:
+        status_norm = saldo["status_triagem"].fillna("").astype(str).str.strip().str.lower()
+        saldo["flag_agendada_roteirizavel"] = (
+            saldo["flag_tem_data_agenda"]
+            & status_norm.eq("roteirizavel")
+            & folga_num.ge(0)
+            & folga_num.lt(2)
+        )
+    else:
+        saldo["flag_agendada_roteirizavel"] = saldo["flag_tem_data_agenda"] & folga_num.ge(0) & folga_num.lt(2)
+
+    bool_cols = ["agendada", "flag_agendada_roteirizavel", "flag_tem_data_agenda", "veiculo_exclusivo", "veiculo_exclusivo_flag"]
     for col in bool_cols:
         if col in saldo.columns:
             saldo[col] = saldo[col].apply(safe_bool)
@@ -348,6 +374,47 @@ def normalize_saldo_m5(
         )
 
     return saldo.reset_index(drop=True).copy()
+
+
+def buscar_fechamento_com_agenda_obrigatoria_m5(
+    df_grupo: pd.DataFrame,
+    veiculos_elegiveis: pd.DataFrame,
+    suffix: str,
+    escopo: str,
+    validar_fechamento_fn: Callable[..., Tuple[Any, ...]],
+    tolerancia_corredor: int,
+) -> Tuple[Optional[pd.DataFrame], Optional[pd.Series], Dict[str, Any]]:
+    auditoria: Dict[str, Any] = {"escopo": escopo, "motivo_final": "sem_fechamento"}
+    if df_grupo is None or df_grupo.empty or veiculos_elegiveis is None or veiculos_elegiveis.empty:
+        auditoria["motivo_final"] = "sem_grupo_ou_veiculos"
+        return None, None, auditoria
+    if "flag_agendada_roteirizavel" not in df_grupo.columns or not df_grupo["flag_agendada_roteirizavel"].fillna(False).astype(bool).any():
+        auditoria["motivo_final"] = "sem_agendada_no_grupo"
+        return None, None, auditoria
+    base = precalcular_ordenacao_m5(df_grupo.copy(), suffix=suffix)
+    base["_agenda_ord_m5"] = (~base["flag_agendada_roteirizavel"].fillna(False).astype(bool)).astype(int)
+    base["_peso_desc_m5"] = -pd.to_numeric(base["peso_calculado"], errors="coerce").fillna(0.0)
+    base = base.sort_values(
+        by=["_agenda_ord_m5", f"_bucket_{suffix}", "_peso_desc_m5", f"_folga_ord_{suffix}", f"_ranking_ord_{suffix}", f"_km_ord_{suffix}", f"_id_str_{suffix}"],
+        ascending=[True, True, True, True, True, True, True],
+        kind="mergesort",
+    ).reset_index(drop=True)
+    veics = veiculos_elegiveis.copy()
+    for c in ["capacidade_peso_kg", "capacidade_vol_m3", "max_entregas"]:
+        veics[c] = pd.to_numeric(veics.get(c, 0), errors="coerce").fillna(0)
+    veics = veics.sort_values(by=["capacidade_peso_kg", "capacidade_vol_m3", "max_entregas"], ascending=[False, False, False], kind="mergesort")
+    for _, vehicle_row in veics.iterrows():
+        candidato = base.copy()
+        while not candidato.empty:
+            ret = validar_fechamento_fn(df_itens=candidato, vehicle_row=vehicle_row, suffix=suffix, tolerancia_corredor=tolerancia_corredor)
+            ok = bool(ret[0]) if ret else False
+            cand_validado = ret[2] if len(ret) > 2 and isinstance(ret[2], pd.DataFrame) else candidato
+            if ok and "flag_agendada_roteirizavel" in cand_validado.columns and cand_validado["flag_agendada_roteirizavel"].fillna(False).astype(bool).any():
+                return cand_validado.reset_index(drop=True), vehicle_row, {"escopo": escopo, "motivo_final": "fechado", "perfil_testado": safe_text(vehicle_row.get("perfil"))}
+            idx_nao_ag = candidato.index[~candidato["flag_agendada_roteirizavel"].fillna(False).astype(bool)]
+            idx_drop = idx_nao_ag[-1] if len(idx_nao_ag) else candidato.index[-1]
+            candidato = candidato.drop(index=idx_drop).reset_index(drop=True)
+    return None, None, auditoria
 
 
 # =========================================================================================

@@ -21,6 +21,7 @@ from app.pipeline.m5_common import (
     ocupacao_perc,
     grupo_respeita_restricao_veiculo,
     buscar_fechamento_territorial_oversized_m5,
+    buscar_fechamento_com_agenda_obrigatoria_m5,
     TOLERANCIA_CORREDOR_MESMA_CIDADE,
 )
 
@@ -788,6 +789,10 @@ def executar_m5_2_composicao_cidades(
     fallback_fechado = 0
     fallback_sem_fechamento = 0
     fallback_corredor_flexibilizado = 0
+    agenda_obrigatoria_tentada = 0
+    agenda_obrigatoria_fechada = 0
+    agenda_obrigatoria_sem_fechamento = 0
+    agenda_obrigatoria_substituiu_sem_agenda = 0
 
     cidades_keys = _ordenar_cidades_por_massa(saldo)
 
@@ -816,6 +821,44 @@ def executar_m5_2_composicao_cidades(
             agendadas_disponiveis_antes_corte_total += int(ag_disp)
             agendadas_incluidas_na_base_prioritaria_total += int(ag_inc)
             agendadas_excluidas_pelo_limite_total += int(ag_exc)
+            if _possui_agendada_roteirizavel(city_df) and (candidato is None or not _possui_agendada_roteirizavel(candidato)):
+                agenda_obrigatoria_tentada += 1
+                candidato_ag, vehicle_row_ag, aud_ag = buscar_fechamento_com_agenda_obrigatoria_m5(
+                    df_grupo=city_df,
+                    veiculos_elegiveis=perfis_elegiveis,
+                    suffix=suffix,
+                    escopo="cidade",
+                    validar_fechamento_fn=lambda df_itens, vehicle_row, tolerancia_corredor, **kwargs: _validar_fechamento_fallback_cidade(
+                        df_itens=df_itens, vehicle_row=vehicle_row, tolerancia_corredor=tolerancia_corredor
+                    ),
+                    tolerancia_corredor=TOLERANCIA_CORREDOR_MESMA_CIDADE,
+                )
+                substituiu = False
+                if candidato_ag is not None and vehicle_row_ag is not None:
+                    agenda_obrigatoria_fechada += 1
+                    substituiu = candidato is not None and (not _possui_agendada_roteirizavel(candidato))
+                    if substituiu:
+                        agenda_obrigatoria_substituiu_sem_agenda += 1
+                    candidato, vehicle_row = candidato_ag, vehicle_row_ag
+                else:
+                    agenda_obrigatoria_sem_fechamento += 1
+                tentativas.append({
+                    "cidade": cidade_key, "uf": uf_key, "tentativa_idx": None, "blocos_considerados": 0,
+                    "veiculo_tipo_tentado": safe_text(vehicle_row_ag.get("tipo")) if vehicle_row_ag is not None else None,
+                    "veiculo_perfil_tentado": safe_text(vehicle_row_ag.get("perfil")) if vehicle_row_ag is not None else None,
+                    "resultado": "agenda_obrigatoria_tentada", "motivo": aud_ag.get("motivo_final", "sem_fechamento"),
+                    "qtd_itens_candidato": int(len(candidato_ag)) if isinstance(candidato_ag, pd.DataFrame) else 0,
+                    "qtd_paradas_candidato": qtd_paradas(candidato_ag) if isinstance(candidato_ag, pd.DataFrame) else 0,
+                    "peso_total_candidato": round(peso_total(candidato_ag), 3) if isinstance(candidato_ag, pd.DataFrame) else 0.0,
+                    "peso_kg_total_candidato": round(peso_auditoria_total(candidato_ag), 3) if isinstance(candidato_ag, pd.DataFrame) else 0.0,
+                    "volume_total_candidato": round(volume_total(candidato_ag), 3) if isinstance(candidato_ag, pd.DataFrame) else 0.0,
+                    "km_referencia_candidato": round(km_referencia(candidato_ag), 2) if isinstance(candidato_ag, pd.DataFrame) else 0.0,
+                    "ocupacao_perc_candidato": round(ocupacao_perc(candidato_ag, vehicle_row_ag), 2) if isinstance(candidato_ag, pd.DataFrame) and vehicle_row_ag is not None else 0.0,
+                    "modulo": "M5.2", "escopo": "cidade", "grupo": cidade_key, "documentos_agendados_no_grupo": int(city_df["flag_agendada_roteirizavel"].fillna(False).astype(bool).sum()),
+                    "documentos_agendados_no_candidato": int(candidato_ag["flag_agendada_roteirizavel"].fillna(False).astype(bool).sum()) if isinstance(candidato_ag, pd.DataFrame) and "flag_agendada_roteirizavel" in candidato_ag.columns else 0,
+                    "perfil_testado": aud_ag.get("perfil_testado"), "ocupacao_simulada": round(ocupacao_perc(candidato_ag, vehicle_row_ag), 2) if isinstance(candidato_ag, pd.DataFrame) and vehicle_row_ag is not None else 0.0,
+                    "motivo_final": aud_ag.get("motivo_final"), "substituiu_candidato_sem_agenda": substituiu
+                })
 
             if candidato is None or vehicle_row is None:
                 fallback_tentado += 1
@@ -961,6 +1004,10 @@ def executar_m5_2_composicao_cidades(
         "fallback_territorial_oversized_m5_2_fechado": int(fallback_fechado),
         "fallback_territorial_oversized_m5_2_sem_fechamento": int(fallback_sem_fechamento),
         "fallback_territorial_oversized_m5_2_corredor_flexibilizado": int(fallback_corredor_flexibilizado),
+        "agenda_obrigatoria_m5_2_tentada": int(agenda_obrigatoria_tentada),
+        "agenda_obrigatoria_m5_2_fechada": int(agenda_obrigatoria_fechada),
+        "agenda_obrigatoria_m5_2_sem_fechamento": int(agenda_obrigatoria_sem_fechamento),
+        "agenda_obrigatoria_m5_2_substituiu_candidato_sem_agenda": int(agenda_obrigatoria_substituiu_sem_agenda),
     }
 
     outputs_m5_2 = {
