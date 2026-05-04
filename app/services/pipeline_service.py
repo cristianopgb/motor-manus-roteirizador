@@ -463,6 +463,40 @@ def _filtrar_por_status_triagem(df: pd.DataFrame, status: str) -> pd.DataFrame:
     return df.loc[df["status_triagem"] == status].copy()
 
 
+def _garantir_campos_auditoria_agenda(df: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame):
+        return pd.DataFrame()
+    out = df.copy()
+    if "data_agenda" in out.columns:
+        out["data_agenda"] = pd.to_datetime(out["data_agenda"], errors="coerce")
+    else:
+        out["data_agenda"] = pd.NaT
+    out["flag_tem_data_agenda"] = out["data_agenda"].notna()
+    if "folga_dias" not in out.columns:
+        out["folga_dias"] = np.nan
+    folga_num = pd.to_numeric(out["folga_dias"], errors="coerce")
+    if "status_triagem" not in out.columns:
+        out["status_triagem"] = np.nan
+    status_norm = out["status_triagem"].fillna("").astype(str).str.strip().str.lower()
+    out["flag_agendada_roteirizavel"] = out["flag_tem_data_agenda"] & status_norm.eq("roteirizavel") & folga_num.ge(0) & folga_num.lt(2)
+    if "motivo_triagem" not in out.columns:
+        out["motivo_triagem"] = np.nan
+    return out
+
+
+def _extrair_campos_agenda(df: pd.DataFrame, status_final: str, incluir_manifesto: bool = False) -> List[Dict[str, Any]]:
+    base = _garantir_campos_auditoria_agenda(df)
+    colunas = ["id_linha_pipeline", "nro_documento", "destinatario", "cidade", "uf", "data_agenda", "folga_dias"]
+    if incluir_manifesto:
+        colunas += ["manifesto_id", "origem_modulo"]
+    else:
+        colunas += ["motivo_nao_roteirizavel", "motivo_final"]
+    existentes = [c for c in colunas if c in base.columns]
+    out = base[existentes].copy()
+    out["status_final"] = status_final
+    return _serializar_dataframe_para_records(out, limit=None)
+
+
 def _normalizar_perfil_comparacao(valor: Any) -> str:
     texto = "" if valor is None else str(valor).strip().upper()
     if not texto:
@@ -3399,6 +3433,14 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
 
     manifestos_m7 = _serializar_dataframe_para_records(df_manifestos_m7, limit=None)
+    df_itens_manifestos_sequenciados_m7 = _garantir_campos_auditoria_agenda(df_itens_manifestos_sequenciados_m7)
+    df_remanescente_m6_2 = _garantir_campos_auditoria_agenda(df_remanescente_m6_2)
+    df_nao_roteirizaveis_m3 = _garantir_campos_auditoria_agenda(df_nao_roteirizaveis_m3)
+    df_agendamento_futuro_m3 = _garantir_campos_auditoria_agenda(df_agendamento_futuro_m3)
+    df_aguardando_agendamento_m3 = _garantir_campos_auditoria_agenda(df_aguardando_agendamento_m3)
+    df_excecoes_triagem_m3 = _garantir_campos_auditoria_agenda(df_excecoes_triagem_m3)
+    df_agenda_vencida_m3 = _garantir_campos_auditoria_agenda(df_agenda_vencida_m3)
+
     itens_manifestos_sequenciados_m7 = _serializar_dataframe_para_records(df_itens_manifestos_sequenciados_m7, limit=None)
     manifestos_sequenciamento_resumo_m7 = _serializar_dataframe_para_records(
         df_manifestos_sequenciamento_resumo_m7, limit=None
@@ -3411,6 +3453,48 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     aguardando_agendamento = _serializar_dataframe_para_records(df_aguardando_agendamento_m3, limit=None)
     excecoes_triagem = _serializar_dataframe_para_records(df_excecoes_triagem_m3, limit=None)
     agenda_vencida = _serializar_dataframe_para_records(df_agenda_vencida_m3, limit=None)
+
+    df_carteira_raw_agenda = _garantir_campos_auditoria_agenda(contexto.df_carteira_raw)
+    df_pos_m1_agenda = _garantir_campos_auditoria_agenda(df_carteira_padronizada)
+    df_pos_m3_agenda = _garantir_campos_auditoria_agenda(df_carteira_triagem)
+    df_itens_m7_agenda = _garantir_campos_auditoria_agenda(df_itens_manifestos_sequenciados_m7)
+    df_remanescente_final_agenda = _garantir_campos_auditoria_agenda(df_remanescente_m6_2)
+    df_agenda_vencida_agenda = _garantir_campos_auditoria_agenda(df_agenda_vencida_m3)
+    df_agendamento_futuro_agenda = _garantir_campos_auditoria_agenda(df_agendamento_futuro_m3)
+
+    agendas_roteirizadas = _extrair_campos_agenda(df_itens_m7_agenda[df_itens_m7_agenda["flag_tem_data_agenda"]], "roteirizado", incluir_manifesto=True)
+    agendas_remanescentes = _extrair_campos_agenda(df_remanescente_final_agenda[df_remanescente_final_agenda["flag_tem_data_agenda"]], "remanescente", incluir_manifesto=False)
+
+    ids_agenda_m3 = set(df_pos_m3_agenda.loc[df_pos_m3_agenda["flag_tem_data_agenda"], "id_linha_pipeline"].dropna().astype(str))
+    ids_agenda_roteirizada = set(df_itens_m7_agenda.loc[df_itens_m7_agenda["flag_tem_data_agenda"], "id_linha_pipeline"].dropna().astype(str))
+    ids_agenda_remanescente = set(df_remanescente_final_agenda.loc[df_remanescente_final_agenda["flag_tem_data_agenda"], "id_linha_pipeline"].dropna().astype(str))
+    ids_agenda_perdida = ids_agenda_m3 - ids_agenda_roteirizada - ids_agenda_remanescente
+    df_agendas_perdidas = df_pos_m3_agenda[
+        df_pos_m3_agenda["flag_tem_data_agenda"]
+        & df_pos_m3_agenda["id_linha_pipeline"].astype(str).isin(ids_agenda_perdida)
+    ].copy()
+    agendas_perdidas_no_contrato = _extrair_campos_agenda(df_agendas_perdidas, "perdida_no_contrato", incluir_manifesto=False)
+
+    auditoria_agendas_roteirizacao = {
+        "total_carteira": _safe_len(contexto.df_carteira_raw),
+        "total_com_data_agenda_raw": int(df_carteira_raw_agenda["flag_tem_data_agenda"].sum()),
+        "total_com_data_agenda_pos_m1": int(df_pos_m1_agenda["flag_tem_data_agenda"].sum()),
+        "total_com_data_agenda_pos_m3": int(df_pos_m3_agenda["flag_tem_data_agenda"].sum()),
+        "total_agendada_roteirizavel_m3": int(df_pos_m3_agenda["flag_agendada_roteirizavel"].sum()),
+        "total_agenda_vencida_m3": int(df_agenda_vencida_agenda["flag_tem_data_agenda"].sum()),
+        "total_agendamento_futuro_m3": int(df_agendamento_futuro_agenda["flag_tem_data_agenda"].sum()),
+        "total_agendada_roteirizada_m7": int(df_itens_m7_agenda["flag_tem_data_agenda"].sum()),
+        "total_agendada_remanescente_final": int(df_remanescente_final_agenda["flag_tem_data_agenda"].sum()),
+        "total_agendada_sem_classificacao_final": int(len(ids_agenda_perdida)),
+        "agendas_roteirizadas": agendas_roteirizadas,
+        "agendas_remanescentes": agendas_remanescentes,
+        "agendas_perdidas_no_contrato": agendas_perdidas_no_contrato,
+    }
+    _print_log(f"[AGENDA AUDITORIA] total_com_data_agenda_raw={auditoria_agendas_roteirizacao['total_com_data_agenda_raw']}")
+    _print_log(f"[AGENDA AUDITORIA] total_agendada_roteirizavel_m3={auditoria_agendas_roteirizacao['total_agendada_roteirizavel_m3']}")
+    _print_log(f"[AGENDA AUDITORIA] total_agendada_roteirizada_m7={auditoria_agendas_roteirizacao['total_agendada_roteirizada_m7']}")
+    _print_log(f"[AGENDA AUDITORIA] total_agendada_remanescente_final={auditoria_agendas_roteirizacao['total_agendada_remanescente_final']}")
+    _print_log(f"[AGENDA AUDITORIA] agendas_perdidas_no_contrato={len(auditoria_agendas_roteirizacao['agendas_perdidas_no_contrato'])}")
 
     manifestos_fechados: List[Dict[str, Any]] = []
     manifestos_compostos: List[Dict[str, Any]] = []
@@ -3494,6 +3578,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             "excecoes_triagem": excecoes_triagem,
             "agenda_vencida": agenda_vencida,
         },
+        "auditoria_agendas_roteirizacao": auditoria_agendas_roteirizacao,
         "total_carteira": _safe_len(contexto.df_carteira_raw),
         "total_roteirizado": _safe_len(df_itens_manifestos_sequenciados_m7),
         "total_nao_roteirizado": _safe_len(df_remanescente_m6_2),
