@@ -235,8 +235,8 @@ def _montar_mapa_agenda_origem(fontes: List[tuple[str, pd.DataFrame]]) -> Dict[s
     for nome_fonte, df_origem in fontes:
         mapa = _mesclar_mapa_agenda_origem(mapa, df_origem, nome_fonte)
     total_com_data = sum(0 if _valor_agenda_vazio(v.get("data_agenda_origem")) else 1 for v in mapa.values())
-    _print_log(f"[AGENDA PROPAGACAO] mapa_agenda_origem_total={len(mapa)}")
-    _print_log(f"[AGENDA PROPAGACAO] mapa_agenda_origem_com_data={total_com_data}")
+    print(f"[AGENDA PROPAGACAO] mapa_agenda_origem_total={len(mapa)}")
+    print(f"[AGENDA PROPAGACAO] mapa_agenda_origem_com_data={total_com_data}")
     return mapa
 
 
@@ -294,14 +294,14 @@ def _enriquecer_campos_agenda_records(records: List[Dict[str, Any]], agenda_por_
         elif _valor_agenda_vazio(item.get("flag_tem_data_agenda")):
             item["flag_tem_data_agenda"] = False
 
-    _print_log(f"[AGENDA PROPAGACAO] itens_m7_total={len(records)}")
-    _print_log(f"[AGENDA PROPAGACAO] itens_m7_com_data_agenda_antes={total_com_data_agenda_antes}")
-    _print_log(f"[AGENDA PROPAGACAO] itens_m7_com_data_agenda_depois={total_com_data_agenda_depois}")
-    _print_log(f"[AGENDA PROPAGACAO] itens_m7_data_agenda_recuperada_por_mapa={total_recuperada_por_mapa}")
-    _print_log(f"[AGENDA PROPAGACAO] recuperadas_do_raw={recuperadas_por_fonte['raw']}")
-    _print_log(f"[AGENDA PROPAGACAO] recuperadas_do_m1={recuperadas_por_fonte['m1']}")
-    _print_log(f"[AGENDA PROPAGACAO] recuperadas_do_m3={recuperadas_por_fonte['m3']}")
-    _print_log(f"[AGENDA PROPAGACAO] exemplos_data_agenda_recuperada={exemplos_recuperados}")
+    print(f"[AGENDA PROPAGACAO] itens_m7_total={len(records)}")
+    print(f"[AGENDA PROPAGACAO] itens_m7_com_data_agenda_antes={total_com_data_agenda_antes}")
+    print(f"[AGENDA PROPAGACAO] itens_m7_com_data_agenda_depois={total_com_data_agenda_depois}")
+    print(f"[AGENDA PROPAGACAO] itens_m7_data_agenda_recuperada_por_mapa={total_recuperada_por_mapa}")
+    print(f"[AGENDA PROPAGACAO] recuperadas_do_raw={recuperadas_por_fonte['raw']}")
+    print(f"[AGENDA PROPAGACAO] recuperadas_do_m1={recuperadas_por_fonte['m1']}")
+    print(f"[AGENDA PROPAGACAO] recuperadas_do_m3={recuperadas_por_fonte['m3']}")
+    print(f"[AGENDA PROPAGACAO] exemplos_data_agenda_recuperada={exemplos_recuperados}")
     return records
 
 
