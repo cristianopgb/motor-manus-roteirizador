@@ -142,6 +142,169 @@ def _serializar_dataframe_para_records(
     return records_sanitizados
 
 
+def _valor_agenda_vazio(valor: Any) -> bool:
+    if valor is None:
+        return True
+    if isinstance(valor, str):
+        return valor.strip().lower() in {"", "-", "nat", "nan", "null"}
+    try:
+        return bool(pd.isna(valor))
+    except Exception:
+        return False
+
+
+def _preservar_data_agenda_item(row: Dict[str, Any]) -> tuple[Any, bool]:
+    candidatos = [
+        row.get("data_agenda"),
+        row.get("valor_normalizado_data_agenda"),
+        row.get("valor_original_data_agenda"),
+        row.get("agendam"),
+        row.get("Agendam."),
+    ]
+    for valor in candidatos:
+        if not _valor_agenda_vazio(valor):
+            return valor, True
+    return None, False
+
+
+def _normalizar_chave_agenda(valor: Any) -> str | None:
+    if _valor_agenda_vazio(valor):
+        return None
+    texto = str(valor).strip()
+    if texto.endswith(".0"):
+        texto = texto[:-2]
+    return texto or None
+
+
+def _chaves_possiveis_linha(row: Dict[str, Any]) -> List[str]:
+    chaves: List[str] = []
+    for campo in ["id_linha_pipeline", "chave_linha_dataset", "nro_documento", "documento", "Nro Doc.", "Nro Do"]:
+        chave = _normalizar_chave_agenda(row.get(campo))
+        if chave and chave not in chaves:
+            chaves.append(chave)
+    return chaves
+
+
+def _mesclar_mapa_agenda_origem(
+    mapa: Dict[str, Dict[str, Any]],
+    df_origem: pd.DataFrame,
+    fonte: str,
+) -> Dict[str, Dict[str, Any]]:
+    if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
+        return mapa
+
+    for _, row in df_origem.iterrows():
+        row_dict = row.to_dict()
+        data_agenda_final, tem_data = _preservar_data_agenda_item(row_dict)
+        payload = {
+            "data_agenda_origem": data_agenda_final,
+            "valor_normalizado_data_agenda": row_dict.get("valor_normalizado_data_agenda"),
+            "valor_original_data_agenda": row_dict.get("valor_original_data_agenda"),
+            "flag_tem_data_agenda": row_dict.get("flag_tem_data_agenda") if row_dict.get("flag_tem_data_agenda") is not None else tem_data,
+            "flag_agendada_roteirizavel": row_dict.get("flag_agendada_roteirizavel"),
+            "folga_dias": row_dict.get("folga_dias"),
+            "status_triagem": row_dict.get("status_triagem"),
+            "motivo_triagem": row_dict.get("motivo_triagem"),
+            "fonte_agenda_origem": fonte,
+        }
+        for chave in _chaves_possiveis_linha(row_dict):
+            if chave not in mapa:
+                mapa[chave] = payload.copy()
+                continue
+            atual = mapa[chave]
+            if _valor_agenda_vazio(atual.get("data_agenda_origem")) and not _valor_agenda_vazio(payload.get("data_agenda_origem")):
+                atual["data_agenda_origem"] = payload.get("data_agenda_origem")
+                atual["fonte_agenda_origem"] = fonte
+            for campo in [
+                "valor_normalizado_data_agenda",
+                "valor_original_data_agenda",
+                "flag_tem_data_agenda",
+                "flag_agendada_roteirizavel",
+                "folga_dias",
+                "status_triagem",
+                "motivo_triagem",
+            ]:
+                if _valor_agenda_vazio(atual.get(campo)) and not _valor_agenda_vazio(payload.get(campo)):
+                    atual[campo] = payload.get(campo)
+    
+    return mapa
+
+
+def _montar_mapa_agenda_origem(fontes: List[tuple[str, pd.DataFrame]]) -> Dict[str, Dict[str, Any]]:
+    mapa: Dict[str, Dict[str, Any]] = {}
+    for nome_fonte, df_origem in fontes:
+        mapa = _mesclar_mapa_agenda_origem(mapa, df_origem, nome_fonte)
+    total_com_data = sum(0 if _valor_agenda_vazio(v.get("data_agenda_origem")) else 1 for v in mapa.values())
+    _print_log(f"[AGENDA PROPAGACAO] mapa_agenda_origem_total={len(mapa)}")
+    _print_log(f"[AGENDA PROPAGACAO] mapa_agenda_origem_com_data={total_com_data}")
+    return mapa
+
+
+def _enriquecer_campos_agenda_records(records: List[Dict[str, Any]], agenda_por_chave: Dict[str, Dict[str, Any]] | None = None) -> List[Dict[str, Any]]:
+    exemplos_recuperados: List[Any] = []
+    total_com_data_agenda_antes = 0
+    total_com_data_agenda_depois = 0
+    total_recuperada_por_mapa = 0
+    recuperadas_por_fonte = {"raw": 0, "m1": 0, "m3": 0}
+    agenda_por_chave = agenda_por_chave or {}
+    for item in records:
+        data_original = item.get("data_agenda")
+        if not _valor_agenda_vazio(data_original):
+            total_com_data_agenda_antes += 1
+        data_final, tem_data = _preservar_data_agenda_item(item)
+        recuperada_do_mapa = False
+        if not tem_data:
+            for chave in _chaves_possiveis_linha(item):
+                origem = agenda_por_chave.get(chave)
+                if not origem:
+                    continue
+                origem_data = origem.get("data_agenda_origem")
+                if _valor_agenda_vazio(origem_data):
+                    continue
+                data_final = origem_data
+                tem_data = True
+                recuperada_do_mapa = True
+                fonte_origem = str(origem.get("fonte_agenda_origem", "")).lower()
+                if fonte_origem in recuperadas_por_fonte:
+                    recuperadas_por_fonte[fonte_origem] += 1
+                if _valor_agenda_vazio(item.get("valor_original_data_agenda")) and not _valor_agenda_vazio(origem.get("valor_original_data_agenda")):
+                    item["valor_original_data_agenda"] = origem.get("valor_original_data_agenda")
+                for campo in ["flag_agendada_roteirizavel", "folga_dias", "status_triagem", "motivo_triagem"]:
+                    if _valor_agenda_vazio(item.get(campo)) and not _valor_agenda_vazio(origem.get(campo)):
+                        item[campo] = origem.get(campo)
+                break
+        if _valor_agenda_vazio(data_original) and not _valor_agenda_vazio(data_final):
+            if len(exemplos_recuperados) < 5:
+                exemplos_recuperados.append(
+                    {
+                        "nro_documento": item.get("nro_documento") or item.get("documento") or item.get("Nro Doc.") or item.get("Nro Do"),
+                        "id_linha_pipeline": item.get("id_linha_pipeline"),
+                        "data_agenda_recuperada": data_final,
+                        "fonte": "mapa_origem" if recuperada_do_mapa else "item_final",
+                    }
+                )
+        if recuperada_do_mapa:
+            total_recuperada_por_mapa += 1
+        if not _valor_agenda_vazio(data_final):
+            item["data_agenda"] = data_final
+            total_com_data_agenda_depois += 1
+            if _valor_agenda_vazio(item.get("valor_normalizado_data_agenda")):
+                item["valor_normalizado_data_agenda"] = data_final
+            item["flag_tem_data_agenda"] = True
+        elif _valor_agenda_vazio(item.get("flag_tem_data_agenda")):
+            item["flag_tem_data_agenda"] = False
+
+    _print_log(f"[AGENDA PROPAGACAO] itens_m7_total={len(records)}")
+    _print_log(f"[AGENDA PROPAGACAO] itens_m7_com_data_agenda_antes={total_com_data_agenda_antes}")
+    _print_log(f"[AGENDA PROPAGACAO] itens_m7_com_data_agenda_depois={total_com_data_agenda_depois}")
+    _print_log(f"[AGENDA PROPAGACAO] itens_m7_data_agenda_recuperada_por_mapa={total_recuperada_por_mapa}")
+    _print_log(f"[AGENDA PROPAGACAO] recuperadas_do_raw={recuperadas_por_fonte['raw']}")
+    _print_log(f"[AGENDA PROPAGACAO] recuperadas_do_m1={recuperadas_por_fonte['m1']}")
+    _print_log(f"[AGENDA PROPAGACAO] recuperadas_do_m3={recuperadas_por_fonte['m3']}")
+    _print_log(f"[AGENDA PROPAGACAO] exemplos_data_agenda_recuperada={exemplos_recuperados}")
+    return records
+
+
 def _montar_resumo_dataframe(df: pd.DataFrame, nome: str) -> Dict[str, Any]:
     return {
         "nome": nome,
@@ -3398,13 +3561,27 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     if "tempo_total_pipeline_ms" not in metricas_tempo:
         metricas_tempo["tempo_total_pipeline_ms"] = tempo_total
 
+    fontes_agenda: List[tuple[str, pd.DataFrame]] = []
+    if isinstance(contexto.df_carteira_raw, pd.DataFrame) and not contexto.df_carteira_raw.empty:
+        fontes_agenda.append(("raw", contexto.df_carteira_raw))
+    if isinstance(df_carteira_tratada, pd.DataFrame) and not df_carteira_tratada.empty:
+        fontes_agenda.append(("m1", df_carteira_tratada))
+    if isinstance(df_carteira_triagem, pd.DataFrame) and not df_carteira_triagem.empty:
+        fontes_agenda.append(("m3", df_carteira_triagem))
+    _print_log(f"[AGENDA PROPAGACAO] fontes_usadas={[nome for nome, _ in fontes_agenda]}")
+    agenda_por_chave = _montar_mapa_agenda_origem(fontes_agenda) if fontes_agenda else {}
+
     manifestos_m7 = _serializar_dataframe_para_records(df_manifestos_m7, limit=None)
     itens_manifestos_sequenciados_m7 = _serializar_dataframe_para_records(df_itens_manifestos_sequenciados_m7, limit=None)
+    itens_manifestos_sequenciados_m7 = _enriquecer_campos_agenda_records(itens_manifestos_sequenciados_m7, agenda_por_chave)
     manifestos_sequenciamento_resumo_m7 = _serializar_dataframe_para_records(
         df_manifestos_sequenciamento_resumo_m7, limit=None
     )
     paradas_m7 = _serializar_dataframe_para_records(df_paradas_m7, limit=None)
     saldo_final_roteirizacao = _serializar_dataframe_para_records(df_remanescente_m6_2, limit=None)
+    saldo_final_roteirizacao = _enriquecer_campos_agenda_records(saldo_final_roteirizacao, agenda_por_chave)
+    if paradas_m7 and any(_chaves_possiveis_linha(p) for p in paradas_m7[:20]):
+        paradas_m7 = _enriquecer_campos_agenda_records(paradas_m7, agenda_por_chave)
 
     nao_roteirizaveis_m3 = _serializar_dataframe_para_records(df_nao_roteirizaveis_m3, limit=None)
     agendamento_futuro = _serializar_dataframe_para_records(df_agendamento_futuro_m3, limit=None)
