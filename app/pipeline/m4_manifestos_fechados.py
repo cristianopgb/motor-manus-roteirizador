@@ -994,11 +994,13 @@ def _executar_dedicados(
     tipo_roteirizacao: str,
     contadores_m4: Dict[str, Any],
 ) -> None:
-    grupos_dedicados = [
-        (cliente, dfc)
-        for cliente, dfc in grupos_cliente
-        if bool(dfc["veiculo_exclusivo_flag"].any())
-    ]
+    grupos_dedicados = []
+    for cliente, dfc in grupos_cliente:
+        flags_exclusivos = dfc["veiculo_exclusivo_flag"].apply(_bool_safe)
+        df_exclusivos = dfc.loc[flags_exclusivos].copy().reset_index(drop=True)
+        if len(df_exclusivos) > 0:
+            grupos_dedicados.append((cliente, df_exclusivos))
+
     contadores_m4["qtd_clientes_exclusivos"] = int(len(grupos_dedicados))
 
     perfis_asc = catalogo_veiculos.sort_values(
@@ -1006,71 +1008,73 @@ def _executar_dedicados(
         ascending=[True, True, True, True],
     )
 
-    for cliente, df_cliente in grupos_dedicados:
-        pool_cliente = _filtrar_nao_alocados(df_cliente, ctx["ids_alocados"])
-        if len(pool_cliente) == 0:
-            continue
-
-        anchor_id = str(pool_cliente["id_linha_pipeline"].astype(str).iloc[0])
-        fechado = False
-
-        for idx, veic in perfis_asc.iterrows():
-            if not _veiculo_disponivel_no_modo_frota(veic, tipo_roteirizacao):
-                tent = {
-                    "etapa_fechamento": "4B1_dedicados",
-                    "tipo_tentativa": "cliente_dedicado",
-                    "cliente_referencia": cliente,
-                    "linha_ancora": anchor_id,
-                    "veiculo_tipo": veic["tipo"],
-                    "resultado_teste": "rejeitado",
-                    "motivo_reprovacao": "perfil_sem_disponibilidade_no_modo_frota",
-                }
-                ctx["tentativas_fechamento"].append(tent)
-                _contabilizar_tentativa(contadores_m4, tent)
+    for cliente, df_cliente_exclusivo in grupos_dedicados:
+        for _, linha_exclusiva in df_cliente_exclusivo.iterrows():
+            pool_linha = pd.DataFrame([linha_exclusiva]).copy().reset_index(drop=True)
+            pool_linha = _filtrar_nao_alocados(pool_linha, ctx["ids_alocados"])
+            if len(pool_linha) == 0:
                 continue
 
-            avaliacao = _avaliar_combo_no_veiculo(
-                pool_cliente,
-                veic=veic,
-                ignorar_ocupacao_minima=True,
-                ignorar_raio=True,
-            )
+            anchor_id = str(pool_linha["id_linha_pipeline"].astype(str).iloc[0])
+            fechado = False
 
-            tent = {
-                **avaliacao,
-                "etapa_fechamento": "4B1_dedicados",
-                "tipo_tentativa": "cliente_dedicado",
-                "cliente_referencia": cliente,
-                "linha_ancora": anchor_id,
-                "resultado_teste": "aceito" if avaliacao["aceito"] else "rejeitado",
-            }
+            for idx, veic in perfis_asc.iterrows():
+                if not _veiculo_disponivel_no_modo_frota(veic, tipo_roteirizacao):
+                    tent = {
+                        "etapa_fechamento": "4B1_dedicados",
+                        "tipo_tentativa": "linha_dedicada",
+                        "cliente_referencia": cliente,
+                        "linha_ancora": anchor_id,
+                        "veiculo_tipo": veic["tipo"],
+                        "resultado_teste": "rejeitado",
+                        "motivo_reprovacao": "perfil_sem_disponibilidade_no_modo_frota",
+                    }
+                    ctx["tentativas_fechamento"].append(tent)
+                    _contabilizar_tentativa(contadores_m4, tent)
+                    continue
 
-            if not avaliacao["aceito"]:
-                tent["motivo_reprovacao"] = _motivo_reprovacao(
-                    avaliacao,
-                    exigir_ocupacao=False,
-                    exigir_raio=False,
+                avaliacao = _avaliar_combo_no_veiculo(
+                    pool_linha,
+                    veic=veic,
+                    ignorar_ocupacao_minima=True,
+                    ignorar_raio=True,
                 )
 
-            ctx["tentativas_fechamento"].append(tent)
-            _contabilizar_tentativa(contadores_m4, tent)
+                tent = {
+                    **avaliacao,
+                    "etapa_fechamento": "4B1_dedicados",
+                    "tipo_tentativa": "linha_dedicada",
+                    "cliente_referencia": cliente,
+                    "linha_ancora": anchor_id,
+                    "resultado_teste": "aceito" if avaliacao["aceito"] else "rejeitado",
+                }
 
-            if avaliacao["aceito"]:
-                _registrar_manifesto(
-                    ctx=ctx,
-                    catalogo_veiculos=catalogo_veiculos,
-                    tipo_roteirizacao=tipo_roteirizacao,
-                    df_combo=pool_cliente,
-                    avaliacao=avaliacao,
-                    origem_etapa="4B1_dedicados",
-                    catalogo_idx=idx,
-                )
-                contadores_m4["qtd_manifestos_exclusivos"] += 1
-                fechado = True
-                break
+                if not avaliacao["aceito"]:
+                    tent["motivo_reprovacao"] = _motivo_reprovacao(
+                        avaliacao,
+                        exigir_ocupacao=False,
+                        exigir_raio=False,
+                    )
 
-        if not fechado:
-            continue
+                ctx["tentativas_fechamento"].append(tent)
+                _contabilizar_tentativa(contadores_m4, tent)
+
+                if avaliacao["aceito"]:
+                    _registrar_manifesto(
+                        ctx=ctx,
+                        catalogo_veiculos=catalogo_veiculos,
+                        tipo_roteirizacao=tipo_roteirizacao,
+                        df_combo=pool_linha,
+                        avaliacao=avaliacao,
+                        origem_etapa="4B1_dedicados",
+                        catalogo_idx=idx,
+                    )
+                    contadores_m4["qtd_manifestos_exclusivos"] += 1
+                    fechado = True
+                    break
+
+            if not fechado:
+                continue
 
 
 # ============================================================
