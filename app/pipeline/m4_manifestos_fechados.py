@@ -994,10 +994,17 @@ def _executar_dedicados(
     tipo_roteirizacao: str,
     contadores_m4: Dict[str, Any],
 ) -> None:
-    grupos_dedicados = []
+    grupos_dedicados: List[Tuple[str, pd.DataFrame]] = []
+
     for cliente, dfc in grupos_cliente:
         flags_exclusivos = dfc["veiculo_exclusivo_flag"].apply(_bool_safe)
         df_exclusivos = dfc.loc[flags_exclusivos].copy().reset_index(drop=True)
+
+        # REGRA VALIDADA:
+        # - Somente as linhas marcadas como veículo dedicado entram neste bloco.
+        # - Linhas do mesmo cliente sem marcação NÃO são puxadas para o manifesto dedicado.
+        # - Todas as linhas dedicadas do mesmo cliente devem ser consolidadas em um único combo.
+        # - A ocupação mínima é ignorada para dedicado; capacidade, volume, paradas e restrição seguem válidos.
         if len(df_exclusivos) > 0:
             grupos_dedicados.append((cliente, df_exclusivos))
 
@@ -1009,72 +1016,70 @@ def _executar_dedicados(
     )
 
     for cliente, df_cliente_exclusivo in grupos_dedicados:
-        for _, linha_exclusiva in df_cliente_exclusivo.iterrows():
-            pool_linha = pd.DataFrame([linha_exclusiva]).copy().reset_index(drop=True)
-            pool_linha = _filtrar_nao_alocados(pool_linha, ctx["ids_alocados"])
-            if len(pool_linha) == 0:
-                continue
+        pool_cliente = _filtrar_nao_alocados(df_cliente_exclusivo, ctx["ids_alocados"])
+        if len(pool_cliente) == 0:
+            continue
 
-            anchor_id = str(pool_linha["id_linha_pipeline"].astype(str).iloc[0])
-            fechado = False
+        anchor_id = str(pool_cliente["id_linha_pipeline"].astype(str).iloc[0])
+        fechado = False
 
-            for idx, veic in perfis_asc.iterrows():
-                if not _veiculo_disponivel_no_modo_frota(veic, tipo_roteirizacao):
-                    tent = {
-                        "etapa_fechamento": "4B1_dedicados",
-                        "tipo_tentativa": "linha_dedicada",
-                        "cliente_referencia": cliente,
-                        "linha_ancora": anchor_id,
-                        "veiculo_tipo": veic["tipo"],
-                        "resultado_teste": "rejeitado",
-                        "motivo_reprovacao": "perfil_sem_disponibilidade_no_modo_frota",
-                    }
-                    ctx["tentativas_fechamento"].append(tent)
-                    _contabilizar_tentativa(contadores_m4, tent)
-                    continue
-
-                avaliacao = _avaliar_combo_no_veiculo(
-                    pool_linha,
-                    veic=veic,
-                    ignorar_ocupacao_minima=True,
-                    ignorar_raio=True,
-                )
-
+        for idx, veic in perfis_asc.iterrows():
+            if not _veiculo_disponivel_no_modo_frota(veic, tipo_roteirizacao):
                 tent = {
-                    **avaliacao,
                     "etapa_fechamento": "4B1_dedicados",
-                    "tipo_tentativa": "linha_dedicada",
+                    "tipo_tentativa": "cliente_dedicado",
                     "cliente_referencia": cliente,
                     "linha_ancora": anchor_id,
-                    "resultado_teste": "aceito" if avaliacao["aceito"] else "rejeitado",
+                    "veiculo_tipo": veic["tipo"],
+                    "resultado_teste": "rejeitado",
+                    "motivo_reprovacao": "perfil_sem_disponibilidade_no_modo_frota",
                 }
-
-                if not avaliacao["aceito"]:
-                    tent["motivo_reprovacao"] = _motivo_reprovacao(
-                        avaliacao,
-                        exigir_ocupacao=False,
-                        exigir_raio=False,
-                    )
-
                 ctx["tentativas_fechamento"].append(tent)
                 _contabilizar_tentativa(contadores_m4, tent)
-
-                if avaliacao["aceito"]:
-                    _registrar_manifesto(
-                        ctx=ctx,
-                        catalogo_veiculos=catalogo_veiculos,
-                        tipo_roteirizacao=tipo_roteirizacao,
-                        df_combo=pool_linha,
-                        avaliacao=avaliacao,
-                        origem_etapa="4B1_dedicados",
-                        catalogo_idx=idx,
-                    )
-                    contadores_m4["qtd_manifestos_exclusivos"] += 1
-                    fechado = True
-                    break
-
-            if not fechado:
                 continue
+
+            avaliacao = _avaliar_combo_no_veiculo(
+                pool_cliente,
+                veic=veic,
+                ignorar_ocupacao_minima=True,
+                ignorar_raio=True,
+            )
+
+            tent = {
+                **avaliacao,
+                "etapa_fechamento": "4B1_dedicados",
+                "tipo_tentativa": "cliente_dedicado",
+                "cliente_referencia": cliente,
+                "linha_ancora": anchor_id,
+                "resultado_teste": "aceito" if avaliacao["aceito"] else "rejeitado",
+            }
+
+            if not avaliacao["aceito"]:
+                tent["motivo_reprovacao"] = _motivo_reprovacao(
+                    avaliacao,
+                    exigir_ocupacao=False,
+                    exigir_raio=False,
+                )
+
+            ctx["tentativas_fechamento"].append(tent)
+            _contabilizar_tentativa(contadores_m4, tent)
+
+            if avaliacao["aceito"]:
+                _registrar_manifesto(
+                    ctx=ctx,
+                    catalogo_veiculos=catalogo_veiculos,
+                    tipo_roteirizacao=tipo_roteirizacao,
+                    df_combo=pool_cliente,
+                    avaliacao=avaliacao,
+                    origem_etapa="4B1_dedicados",
+                    catalogo_idx=idx,
+                )
+                contadores_m4["qtd_manifestos_exclusivos"] += 1
+                fechado = True
+                break
+
+        if not fechado:
+            continue
 
 
 # ============================================================
