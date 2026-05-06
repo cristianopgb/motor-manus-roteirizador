@@ -219,6 +219,10 @@ class CarteiraItem(BaseModel):
         default=None,
         validation_alias=AliasChoices("Fim En", "Fim Ent.", "Fim Ent"),
     )
+    redespacho_flag: Optional[bool] = None
+    redespacho_codigo: Optional[str] = None
+    redespacho_transportadora_id: Optional[str] = None
+    redespacho_transportadora_nome: Optional[str] = None
 
 
 class Veiculo(BaseModel):
@@ -278,6 +282,18 @@ class ConfiguracaoFrotaItem(BaseModel):
     quantidade: int
 
 
+class TransportadoraRedespachoItem(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+        extra="allow",
+    )
+
+    id: str
+    codigo: str
+    nome: str
+    ativo: bool
+
+
 class ParametrosRoteirizacao(BaseModel):
     """
     Contexto operacional da execução.
@@ -326,6 +342,7 @@ class RoteirizacaoRequest(BaseModel):
 
     parametros: ParametrosRoteirizacao
     configuracao_frota: List[ConfiguracaoFrotaItem] = Field(default_factory=list)
+    transportadoras_redespacho: List[TransportadoraRedespachoItem] = Field(default_factory=list)
 
 
 from pydantic import BaseModel

@@ -59,6 +59,36 @@ def executar_m3_triagem(
     carteira["dias_ate_data_alvo"] = pd.to_numeric(carteira["dias_ate_data_alvo"], errors="coerce")
     carteira["peso_kg"] = pd.to_numeric(carteira["peso_kg"], errors="coerce")
     carteira["peso_calculado"] = pd.to_numeric(carteira["peso_calculado"], errors="coerce")
+    carteira["redespacho_codigo"] = carteira.get("redespacho_codigo", pd.Series(index=carteira.index, dtype="object")).astype("object")
+    carteira["tipo_operacao"] = carteira.get("tipo_operacao", "normal")
+    carteira["redespacho_flag"] = carteira.get("redespacho_flag", False).fillna(False).astype(bool)
+    carteira["flag_redespacho"] = (
+        carteira["redespacho_flag"]
+        | carteira["redespacho_codigo"].fillna("").astype(str).str.strip().ne("")
+        | carteira["tipo_operacao"].fillna("").astype(str).str.lower().eq("redespacho")
+    )
+
+    df_redespacho_base = carteira.loc[carteira["flag_redespacho"]].copy()
+    carteira = carteira.loc[~carteira["flag_redespacho"]].copy()
+
+    if not df_redespacho_base.empty:
+        df_redespacho_base["tipo_operacao"] = "redespacho"
+    df_redespacho_excecoes = df_redespacho_base.loc[
+        df_redespacho_base["redespacho_codigo"].fillna("").astype(str).str.strip().eq("")
+        | df_redespacho_base["peso_calculado"].isna()
+    ].copy()
+    if not df_redespacho_excecoes.empty:
+        df_redespacho_excecoes["status_triagem"] = "excecao_triagem"
+        df_redespacho_excecoes["motivo_triagem"] = np.where(
+            df_redespacho_excecoes["redespacho_codigo"].fillna("").astype(str).str.strip().eq(""),
+            "redespacho_codigo_ausente",
+            "redespacho_peso_calculado_ausente",
+        )
+
+    df_carteira_redespacho = df_redespacho_base.loc[
+        df_redespacho_base["redespacho_codigo"].fillna("").astype(str).str.strip().ne("")
+        & df_redespacho_base["peso_calculado"].notna()
+    ].copy()
 
     # Verdade operacional de agenda = existe data_agenda
     carteira["agendada"] = carteira["data_agenda"].notna()
@@ -98,7 +128,7 @@ def executar_m3_triagem(
         & folga_num.lt(2)
     )
 
-    df_carteira_triagem = carteira.copy()
+    df_carteira_triagem = pd.concat([carteira.copy(), df_redespacho_excecoes], ignore_index=True, sort=False)
 
     df_carteira_roteirizavel = (
         carteira.loc[carteira["status_triagem"] == "roteirizavel"]
@@ -146,6 +176,7 @@ def executar_m3_triagem(
         df_carteira_roteirizavel=df_carteira_roteirizavel,
         df_carteira_agendamento_futuro=df_carteira_agendamento_futuro,
         df_carteira_agendas_vencidas=df_carteira_agendas_vencidas,
+        df_carteira_redespacho=df_carteira_redespacho,
         data_base_roteirizacao=data_base_roteirizacao,
         caminhos_pipeline=caminhos_pipeline or {},
     )
@@ -155,6 +186,7 @@ def executar_m3_triagem(
         "df_carteira_roteirizavel": df_carteira_roteirizavel,
         "df_carteira_agendamento_futuro": df_carteira_agendamento_futuro,
         "df_carteira_agendas_vencidas": df_carteira_agendas_vencidas,
+        "df_carteira_redespacho": df_carteira_redespacho,
     }
 
     return df_carteira_triagem, {
@@ -360,6 +392,7 @@ def _montar_resumo_m3(
     df_carteira_roteirizavel: pd.DataFrame,
     df_carteira_agendamento_futuro: pd.DataFrame,
     df_carteira_agendas_vencidas: pd.DataFrame,
+    df_carteira_redespacho: pd.DataFrame,
     data_base_roteirizacao: datetime,
     caminhos_pipeline: Dict[str, Any],
 ) -> Dict[str, Any]:
@@ -392,6 +425,9 @@ def _montar_resumo_m3(
         "carteira_roteirizavel": int(len(df_carteira_roteirizavel)),
         "carteira_agendamento_futuro": int(len(df_carteira_agendamento_futuro)),
         "carteira_agendas_vencidas": int(len(df_carteira_agendas_vencidas)),
+        "total_redespacho": int(len(df_carteira_redespacho)),
+        "total_transportadoras_redespacho": int(df_carteira_redespacho["redespacho_transportadora_id"].dropna().astype(str).str.strip().replace("", np.nan).dropna().nunique()) if "redespacho_transportadora_id" in df_carteira_redespacho.columns else 0,
+        "peso_total_redespacho": float(pd.to_numeric(df_carteira_redespacho["peso_calculado"], errors="coerce").fillna(0).sum()) if "peso_calculado" in df_carteira_redespacho.columns else 0.0,
         "carteira_excecoes_triagem": int((df_carteira_triagem["status_triagem"] == "excecao_triagem").sum()),
         "agendadas_na_roteirizavel": int(df_carteira_roteirizavel["data_agenda"].notna().sum()),
         "leadtime_na_roteirizavel": int(df_carteira_roteirizavel["data_agenda"].isna().sum()),

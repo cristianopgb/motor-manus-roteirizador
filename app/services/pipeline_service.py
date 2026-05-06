@@ -1055,6 +1055,12 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     df_carteira_roteirizavel = outputs_m3["df_carteira_roteirizavel"]
     df_carteira_agendamento_futuro = outputs_m3["df_carteira_agendamento_futuro"]
     df_carteira_agendas_vencidas = outputs_m3["df_carteira_agendas_vencidas"]
+    df_carteira_redespacho = _extrair_dataframe_m3(outputs_m3, ["df_carteira_redespacho"])
+    codigos_redespacho = []
+    if not df_carteira_redespacho.empty and "redespacho_codigo" in df_carteira_redespacho.columns:
+        codigos_redespacho = sorted({str(v).strip() for v in df_carteira_redespacho["redespacho_codigo"].dropna().tolist() if str(v).strip()})
+    _print_log(f"[M3 REDESPACHO] total_redespacho={_safe_len(df_carteira_redespacho)}", force=True)
+    _print_log(f"[M3 REDESPACHO] codigos_redespacho={codigos_redespacho}", force=True)
     df_agendamento_futuro_m3 = _extrair_dataframe_m3(
         outputs_m3, ["df_agendamento_futuro", "df_carteira_agendamento_futuro"]
     )
@@ -1181,6 +1187,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
                 "total_roteirizavel_m3": _safe_len(df_carteira_roteirizavel),
                 "total_agendamento_futuro_m3": _safe_len(df_carteira_agendamento_futuro),
                 "total_agendas_vencidas_m3": _safe_len(df_carteira_agendas_vencidas),
+                "total_redespacho_m3": _safe_len(df_carteira_redespacho),
                 "total_input_bloco_4": _safe_len(df_input_oficial_bloco_4),
                 "resumo_m3": resumo_m3,
                 "resumo_m31": resumo_m31,
@@ -1398,6 +1405,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
                 "total_roteirizavel_m3": _safe_len(df_carteira_roteirizavel),
                 "total_agendamento_futuro_m3": _safe_len(df_carteira_agendamento_futuro),
                 "total_agendas_vencidas_m3": _safe_len(df_carteira_agendas_vencidas),
+                "total_redespacho_m3": _safe_len(df_carteira_redespacho),
                 "total_input_bloco_4": _safe_len(df_input_oficial_bloco_4),
                 "total_entrada_bloco_4": int(resumo_m4.get("roteirizavel_entrada_m4", _safe_len(df_input_oficial_bloco_4))),
                 "dedicados_encontrados_m4": int(meta_m4.get("metricas_m4", {}).get("contadores_m4", {}).get("qtd_manifestos_exclusivos", 0)),
@@ -1597,6 +1605,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
                 "total_roteirizavel_m3": _safe_len(df_carteira_roteirizavel),
                 "total_agendamento_futuro_m3": _safe_len(df_carteira_agendamento_futuro),
                 "total_agendas_vencidas_m3": _safe_len(df_carteira_agendas_vencidas),
+                "total_redespacho_m3": _safe_len(df_carteira_redespacho),
                 "total_input_bloco_4": _safe_len(df_input_oficial_bloco_4),
                 "total_remanescente_m4": _safe_len(df_remanescente_roteirizavel_bloco_4),
                 "linhas_entrada_m5_1": int(resumo_m5_1.get("linhas_entrada", 0)),
