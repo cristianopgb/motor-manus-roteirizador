@@ -664,6 +664,11 @@ def _garantir_colunas_carteira_v2(carteira: pd.DataFrame) -> pd.DataFrame:
     carteira = _coalescer_colunas(carteira, "carro_dedicado", ["carro_dedicado", "veiculo_exclusivo"])
     carteira = _coalescer_colunas(carteira, "inicio_ent", ["inicio_ent"])
     carteira = _coalescer_colunas(carteira, "fim_en", ["fim_en", "fim_ent", "fim_ent_1"])
+    carteira = _coalescer_colunas(carteira, "redespacho_flag", ["redespacho_flag"])
+    carteira = _coalescer_colunas(carteira, "redespacho_codigo", ["redespacho_codigo"])
+    carteira = _coalescer_colunas(carteira, "redespacho_transportadora_id", ["redespacho_transportadora_id"])
+    carteira = _coalescer_colunas(carteira, "redespacho_transportadora_nome", ["redespacho_transportadora_nome"])
+    carteira = _coalescer_colunas(carteira, "tipo_operacao", ["tipo_operacao"])
 
     return carteira
 
@@ -787,6 +792,11 @@ def executar_m1_padronizacao(
         "carro_dedicado": "veiculo_exclusivo",
         "inicio_ent": "inicio_entrega",
         "fim_en": "fim_entrega",
+        "redespacho_flag": "redespacho_flag",
+        "redespacho_codigo": "redespacho_codigo",
+        "redespacho_transportadora_id": "redespacho_transportadora_id",
+        "redespacho_transportadora_nome": "redespacho_transportadora_nome",
+        "tipo_operacao": "tipo_operacao",
     }
 
     carteira = carteira.rename(
@@ -958,6 +968,15 @@ def executar_m1_padronizacao(
     else:
         carteira["veiculo_exclusivo_flag"] = False
 
+    carteira["redespacho_codigo"] = carteira.get("redespacho_codigo", np.nan).apply(normalizar_texto_basico)
+    carteira["redespacho_transportadora_id"] = carteira.get("redespacho_transportadora_id", np.nan).apply(normalizar_texto_basico)
+    carteira["redespacho_transportadora_nome"] = carteira.get("redespacho_transportadora_nome", np.nan).apply(normalizar_texto_basico)
+    carteira["redespacho_flag"] = converter_flag_sim_nao(carteira.get("redespacho_flag", False)).fillna(False)
+    carteira["flag_redespacho_codigo_preenchido"] = carteira["redespacho_codigo"].notna()
+    carteira["flag_redespacho_codigo_ausente"] = carteira["redespacho_flag"] & carteira["redespacho_codigo"].isna()
+    carteira["redespacho_flag"] = carteira["redespacho_flag"] | carteira["flag_redespacho_codigo_preenchido"]
+    carteira["tipo_operacao"] = np.where(carteira["redespacho_flag"], "redespacho", "normal")
+
     # --------------------------------------------------------
     # REGRA OFICIAL DE PESO DO MOTOR
     # peso_calculado = Peso Calculo
@@ -1107,6 +1126,12 @@ def executar_m1_padronizacao(
         "veiculo_exclusivo",
         "inicio_entrega",
         "fim_entrega",
+        "redespacho_flag",
+        "redespacho_codigo",
+        "redespacho_transportadora_id",
+        "redespacho_transportadora_nome",
+        "tipo_operacao",
+        "flag_redespacho_codigo_ausente",
     ]
 
     for col in colunas_minimas:
