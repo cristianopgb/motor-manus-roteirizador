@@ -1215,6 +1215,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         data_base_roteirizacao=contexto.data_base,
         tipo_roteirizacao=contexto.tipo_roteirizacao,
         configuracao_frota=payload.configuracao_frota,
+        df_carteira_redespacho=df_carteira_redespacho,
         caminhos_pipeline=contexto.caminhos_pipeline,
     )
     tempo_m4 = _duracao_ms(t0)

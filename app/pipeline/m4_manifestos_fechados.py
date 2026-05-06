@@ -587,6 +587,7 @@ def _avaliar_combo_no_veiculo(
     veic: pd.Series,
     ignorar_ocupacao_minima: bool = False,
     ignorar_raio: bool = False,
+    forcar_qtd_paradas_operacional: Optional[int] = None,
 ) -> Dict[str, Any]:
     base_carga_total = _obter_base_carga_oficial(df_combo)
     peso_total_kg = float(pd.to_numeric(df_combo["peso_kg"], errors="coerce").fillna(0).sum())
@@ -596,7 +597,7 @@ def _avaliar_combo_no_veiculo(
     col_doc = _obter_coluna_id_documento(df_combo)
     qtd_ctes = int(df_combo[col_doc].astype(str).nunique())
     qtd_itens = int(len(df_combo))
-    qtd_paradas = _calcular_qtd_paradas(df_combo)
+    qtd_paradas = int(forcar_qtd_paradas_operacional) if forcar_qtd_paradas_operacional is not None else _calcular_qtd_paradas(df_combo)
 
     cap_peso = float(veic["capacidade_peso_kg"])
     cap_vol = float(veic["capacidade_vol_m3"])
@@ -734,7 +735,137 @@ def _inicializar_contexto_execucao() -> Dict[str, Any]:
         "tentativas_fechamento": [],
         "ids_alocados": set(),
         "contador_manifesto": 1,
+        "contador_manifesto_redespacho": 1,
     }
+
+
+def _registrar_manifesto_redespacho(
+    ctx: Dict[str, Any],
+    catalogo_veiculos: pd.DataFrame,
+    tipo_roteirizacao: str,
+    df_combo: pd.DataFrame,
+    avaliacao: Dict[str, Any],
+    catalogo_idx: Optional[int],
+) -> None:
+    manifesto_id = f"RD_{ctx['contador_manifesto_redespacho']:04d}"
+    ctx["contador_manifesto_redespacho"] += 1
+    redespacho_codigo = str(df_combo.get("redespacho_codigo", "").iloc[0]).strip()
+    redespacho_transportadora_id = df_combo.get("redespacho_transportadora_id", pd.Series([np.nan])).iloc[0]
+    redespacho_transportadora_nome = df_combo.get("redespacho_transportadora_nome", pd.Series([np.nan])).iloc[0]
+    resumo = _gerar_resumo_manifesto(
+        df_combo=df_combo,
+        avaliacao=avaliacao,
+        manifesto_id=manifesto_id,
+        tipo_manifesto="redespacho",
+        origem_etapa="4A_redespacho",
+    )
+    resumo["tipo_operacao_manifesto"] = "redespacho"
+    resumo["redespacho_flag"] = True
+    resumo["redespacho_codigo"] = redespacho_codigo
+    resumo["redespacho_transportadora_id"] = redespacho_transportadora_id
+    resumo["redespacho_transportadora_nome"] = redespacho_transportadora_nome
+    resumo["sequenciamento_aplicavel"] = False
+    resumo["redespacho_excede_capacidade"] = bool(avaliacao.get("redespacho_excede_capacidade", False))
+    resumo["redespacho_excede_peso"] = bool(avaliacao.get("redespacho_excede_peso", False))
+    resumo["redespacho_excede_volume"] = bool(avaliacao.get("redespacho_excede_volume", False))
+    resumo["redespacho_regra_capacidade"] = avaliacao.get("redespacho_regra_capacidade", "menor_veiculo_viavel")
+    ctx["manifestos_fechados"].append(resumo)
+
+    itens = df_combo.copy().reset_index(drop=True)
+    itens["manifesto_id"] = manifesto_id
+    itens["tipo_manifesto"] = "redespacho"
+    itens["tipo_operacao"] = "redespacho"
+    itens["origem_modulo"] = 4
+    itens["origem_etapa"] = "4A_redespacho"
+    itens["redespacho_flag"] = True
+    itens["redespacho_codigo"] = redespacho_codigo
+    itens["redespacho_transportadora_id"] = redespacho_transportadora_id
+    itens["redespacho_transportadora_nome"] = redespacho_transportadora_nome
+    itens["veiculo_tipo"] = avaliacao["veiculo_tipo"]
+    itens["base_carga_oficial_manifesto"] = avaliacao["base_carga_oficial"]
+    itens["ocupacao_oficial_perc_manifesto"] = avaliacao["ocupacao_oficial_perc"]
+    itens["ignorar_ocupacao_minima_manifesto"] = True
+    itens["ignorar_raio_manifesto"] = True
+    itens["sequenciamento_aplicavel"] = False
+    itens["redespacho_excede_capacidade"] = bool(avaliacao.get("redespacho_excede_capacidade", False))
+    itens["redespacho_regra_capacidade"] = avaliacao.get("redespacho_regra_capacidade", "menor_veiculo_viavel")
+    ctx["itens_manifestos_fechados"].append(itens)
+    ctx["ids_alocados"].update(set(df_combo["id_linha_pipeline"].astype(str).tolist()))
+    _consumir_veiculo_catalogo(catalogo_veiculos, catalogo_idx, tipo_roteirizacao)
+
+
+def _executar_redespacho(
+    ctx: Dict[str, Any],
+    df_carteira_redespacho: pd.DataFrame,
+    catalogo_veiculos: pd.DataFrame,
+    tipo_roteirizacao: str,
+    contadores_m4: Dict[str, Any],
+) -> None:
+    if df_carteira_redespacho is None or len(df_carteira_redespacho) == 0:
+        return
+    fila = _filtrar_nao_alocados(df_carteira_redespacho.copy(), ctx["ids_alocados"])
+    if len(fila) == 0:
+        return
+    for c in ["id_linha_pipeline", "peso_calculado", "peso_kg", "vol_m3", "redespacho_codigo", "redespacho_transportadora_id", "redespacho_transportadora_nome", "tipo_operacao"]:
+        if c not in fila.columns:
+            fila[c] = np.nan
+    fila = fila.loc[fila["redespacho_codigo"].fillna("").astype(str).str.strip().ne("")].copy()
+    print(f"[M4 REDESPACHO] total_linhas={len(fila)}")
+    codigos = sorted(fila["redespacho_codigo"].fillna("").astype(str).str.strip().unique().tolist())
+    print(f"[M4 REDESPACHO] codigos={codigos}")
+    contadores_m4["qtd_transportadoras_redespacho"] = len(codigos)
+    perfis_asc = catalogo_veiculos.sort_values(by=["capacidade_peso_kg", "capacidade_vol_m3", "max_entregas", "max_km_distancia"], ascending=[True, True, True, True]).reset_index()
+    perfis_disponiveis = perfis_asc.loc[
+        perfis_asc.apply(lambda row: _veiculo_disponivel_no_modo_frota(catalogo_veiculos.loc[int(row["index"])], tipo_roteirizacao), axis=1)
+    ].copy()
+    for codigo, grupo in fila.groupby("redespacho_codigo", sort=True):
+        pool = grupo.copy()
+        contadores_m4["qtd_tentativas_redespacho"] += 1
+        if perfis_disponiveis.empty:
+            ctx["tentativas_fechamento"].append({
+                "etapa_fechamento": "4A_redespacho",
+                "tipo_tentativa": "redespacho",
+                "redespacho_codigo": str(codigo),
+                "resultado_teste": "rejeitado",
+                "motivo_reprovacao": "perfil_sem_disponibilidade_no_modo_frota",
+            })
+            continue
+        escolhido_idx: Optional[int] = None
+        avaliacao_escolhida: Optional[Dict[str, Any]] = None
+        for _, row in perfis_disponiveis.iterrows():
+            idx_original = int(row["index"])
+            av = _avaliar_combo_no_veiculo(pool, veic=catalogo_veiculos.loc[idx_original], ignorar_ocupacao_minima=True, ignorar_raio=True, forcar_qtd_paradas_operacional=1)
+            if av["aceito"]:
+                escolhido_idx = idx_original
+                av["redespacho_excede_capacidade"] = False
+                av["redespacho_excede_peso"] = False
+                av["redespacho_excede_volume"] = False
+                av["redespacho_regra_capacidade"] = "menor_veiculo_viavel"
+                avaliacao_escolhida = av
+                break
+        if escolhido_idx is None:
+            candidatos = perfis_disponiveis.copy()
+            candidatos["tipo_norm"] = candidatos["tipo"].astype(str).str.upper().str.strip()
+            if (candidatos["tipo_norm"] == "CARRETA").any():
+                escolhido = candidatos.loc[candidatos["tipo_norm"] == "CARRETA"].iloc[-1]
+            else:
+                escolhido = candidatos.sort_values(by=["capacidade_peso_kg", "capacidade_vol_m3"], ascending=[False, False]).iloc[0]
+            escolhido_idx = int(escolhido["index"])
+            av = _avaliar_combo_no_veiculo(pool, veic=catalogo_veiculos.loc[escolhido_idx], ignorar_ocupacao_minima=True, ignorar_raio=True, forcar_qtd_paradas_operacional=1)
+            av["aceito"] = True
+            av["redespacho_excede_capacidade"] = True
+            av["redespacho_excede_peso"] = not bool(av.get("cabe_carga_oficial", True))
+            av["redespacho_excede_volume"] = not bool(av.get("cabe_vol", True))
+            av["redespacho_regra_capacidade"] = "maior_veiculo_por_excesso_permitido"
+            avaliacao_escolhida = av
+            contadores_m4["qtd_redespacho_excedeu_capacidade"] += 1
+        _registrar_manifesto_redespacho(ctx, catalogo_veiculos, tipo_roteirizacao, pool, avaliacao_escolhida, escolhido_idx)
+        contadores_m4["qtd_manifestos_redespacho"] += 1
+        contadores_m4["qtd_itens_redespacho"] += len(pool)
+        contadores_m4["peso_total_redespacho"] += float(pd.to_numeric(pool["peso_calculado"], errors="coerce").fillna(0).sum())
+    print(f"[M4 REDESPACHO] manifestos_gerados={contadores_m4['qtd_manifestos_redespacho']}")
+    print(f"[M4 REDESPACHO] itens_alocados={contadores_m4['qtd_itens_redespacho']}")
+    print(f"[M4 REDESPACHO] excederam_capacidade={contadores_m4['qtd_redespacho_excedeu_capacidade']}")
 
 
 def _contabilizar_tentativa(contadores_m4: Dict[str, Any], tent: Dict[str, Any]) -> None:
@@ -1665,6 +1796,7 @@ def executar_m4_manifestos_fechados(
     data_base_roteirizacao: pd.Timestamp,
     tipo_roteirizacao: str = "carteira",
     configuracao_frota: Any = None,
+    df_carteira_redespacho: Optional[pd.DataFrame] = None,
     caminhos_pipeline: Dict[str, Any] | None = None,
 ) -> Tuple[Dict[str, pd.DataFrame], Dict[str, Any]]:
     inicio_total = _agora()
@@ -1686,6 +1818,12 @@ def executar_m4_manifestos_fechados(
         "qtd_manifestos_nao_exclusivos": 0,
         "qtd_clientes_eliminados_peso_minimo": 0,
         "qtd_clientes_sem_perfil_por_raio": 0,
+        "qtd_manifestos_redespacho": 0,
+        "qtd_itens_redespacho": 0,
+        "qtd_transportadoras_redespacho": 0,
+        "peso_total_redespacho": 0.0,
+        "qtd_redespacho_excedeu_capacidade": 0,
+        "qtd_tentativas_redespacho": 0,
     }
 
     caminhos_pipeline = caminhos_pipeline or {}
@@ -1719,7 +1857,20 @@ def executar_m4_manifestos_fechados(
     tempos_m4["montagem_indices_cliente_ms"] = _duracao_ms(t0)
 
     # ------------------------------------------------------------
-    # BLOCO 3 - DEDICADOS
+    # BLOCO 3 - REDESPACHO
+    # ------------------------------------------------------------
+    t0 = _agora()
+    _executar_redespacho(
+        ctx=ctx,
+        df_carteira_redespacho=df_carteira_redespacho if isinstance(df_carteira_redespacho, pd.DataFrame) else pd.DataFrame(),
+        catalogo_veiculos=catalogo_veiculos,
+        tipo_roteirizacao=tipo_roteirizacao,
+        contadores_m4=contadores_m4,
+    )
+    tempos_m4["4A_redespacho_ms"] = _duracao_ms(t0)
+
+    # ------------------------------------------------------------
+    # BLOCO 4 - DEDICADOS
     # ------------------------------------------------------------
     t0 = _agora()
     _executar_dedicados(
@@ -1732,7 +1883,7 @@ def executar_m4_manifestos_fechados(
     tempos_m4["4B1_dedicados_ms"] = _duracao_ms(t0)
 
     # ------------------------------------------------------------
-    # BLOCO 4 - FILTRO MÍNIMO NÃO DEDICADO
+    # BLOCO 5 - FILTRO MÍNIMO NÃO DEDICADO
     # ------------------------------------------------------------
     t0 = _agora()
     filtro_nao_dedicado = _filtrar_clientes_minimo_nao_dedicado(
@@ -1746,7 +1897,7 @@ def executar_m4_manifestos_fechados(
     grupos_validos = filtro_nao_dedicado["grupos_validos"]
 
     # ------------------------------------------------------------
-    # BLOCO 5 - NÃO DEDICADOS
+    # BLOCO 6 - NÃO DEDICADOS
     # ------------------------------------------------------------
     t0 = _agora()
     _executar_nao_dedicados(
@@ -1759,7 +1910,7 @@ def executar_m4_manifestos_fechados(
     tempos_m4["4C_nao_exclusivos_ms"] = _duracao_ms(t0)
 
     # ------------------------------------------------------------
-    # BLOCO 6 - OUTPUTS
+    # BLOCO 7 - OUTPUTS
     # ------------------------------------------------------------
     t0 = _agora()
     outputs = _montar_outputs_m4(
