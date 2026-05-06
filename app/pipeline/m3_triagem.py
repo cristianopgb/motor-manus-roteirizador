@@ -426,7 +426,7 @@ def _montar_resumo_m3(
         "carteira_agendamento_futuro": int(len(df_carteira_agendamento_futuro)),
         "carteira_agendas_vencidas": int(len(df_carteira_agendas_vencidas)),
         "total_redespacho": int(len(df_carteira_redespacho)),
-        "total_transportadoras_redespacho": int(df_carteira_redespacho["redespacho_transportadora_id"].dropna().astype(str).str.strip().replace("", np.nan).dropna().nunique()) if "redespacho_transportadora_id" in df_carteira_redespacho.columns else 0,
+        "total_transportadoras_redespacho": int(df_carteira_redespacho["redespacho_codigo"].dropna().astype(str).str.strip().replace("", np.nan).dropna().nunique()) if "redespacho_codigo" in df_carteira_redespacho.columns else 0,
         "peso_total_redespacho": float(pd.to_numeric(df_carteira_redespacho["peso_calculado"], errors="coerce").fillna(0).sum()) if "peso_calculado" in df_carteira_redespacho.columns else 0.0,
         "carteira_excecoes_triagem": int((df_carteira_triagem["status_triagem"] == "excecao_triagem").sum()),
         "agendadas_na_roteirizavel": int(df_carteira_roteirizavel["data_agenda"].notna().sum()),
