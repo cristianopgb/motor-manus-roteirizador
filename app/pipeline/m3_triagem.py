@@ -147,13 +147,33 @@ def executar_m3_triagem(
     carteira["flag_agendamento_futuro"] = carteira["status_triagem"].eq("agendamento_futuro")
     carteira["flag_agenda_vencida"] = carteira["status_triagem"].eq("agenda_vencida")
     folga_num = pd.to_numeric(carteira["folga_dias"], errors="coerce")
-    data_agenda_valida = carteira["data_agenda"].apply(_data_agenda_valida)
-    carteira["flag_agendada_roteirizavel"] = (
-        carteira["status_triagem"].eq("roteirizavel")
-        & data_agenda_valida
-        & folga_num.ge(0)
-        & folga_num.lt(2)
+
+    mask_status_roteirizavel = _serie_bool_safe(
+        carteira["status_triagem"].astype(str).eq("roteirizavel"),
+        carteira.index,
     )
+
+    mask_data_agenda_valida = _serie_bool_safe(
+        carteira["data_agenda"].apply(_data_agenda_valida),
+        carteira.index,
+    )
+
+    mask_folga_ge_0 = _serie_bool_safe(
+        folga_num.ge(0),
+        carteira.index,
+    )
+
+    mask_folga_lt_2 = _serie_bool_safe(
+        folga_num.lt(2),
+        carteira.index,
+    )
+
+    carteira["flag_agendada_roteirizavel"] = (
+        mask_status_roteirizavel
+        & mask_data_agenda_valida
+        & mask_folga_ge_0
+        & mask_folga_lt_2
+    ).astype(bool)
 
     df_carteira_triagem = pd.concat([carteira.copy(), df_redespacho_excecoes], ignore_index=True, sort=False)
 
