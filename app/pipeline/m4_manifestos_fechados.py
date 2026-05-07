@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -794,6 +795,94 @@ def _registrar_manifesto_redespacho(
     _consumir_veiculo_catalogo(catalogo_veiculos, catalogo_idx, tipo_roteirizacao)
 
 
+
+
+def _preparar_dataframe_redespacho_m4(df_redespacho: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    df = df_redespacho.copy().reset_index(drop=True)
+
+    colunas_defaults = {
+        "id_linha_pipeline": np.nan,
+        "cte": np.nan,
+        "nro_documento": np.nan,
+        "destinatario": np.nan,
+        "cidade": np.nan,
+        "uf": np.nan,
+        "peso_kg": np.nan,
+        "vol_m3": 0,
+        "peso_calculado": np.nan,
+        "distancia_rodoviaria_est_km": np.nan,
+        "restricao_veiculo": np.nan,
+        "redespacho_codigo": np.nan,
+        "redespacho_transportadora_id": np.nan,
+        "redespacho_transportadora_nome": np.nan,
+        "tipo_operacao": "redespacho",
+    }
+    for col, default in colunas_defaults.items():
+        if col not in df.columns:
+            df[col] = default
+
+    df["peso_kg"] = pd.to_numeric(df["peso_kg"], errors="coerce")
+    peso_calc = pd.to_numeric(df["peso_calculado"], errors="coerce")
+    df.loc[df["peso_kg"].isna(), "peso_kg"] = peso_calc[df["peso_kg"].isna()]
+    df["vol_m3"] = pd.to_numeric(df["vol_m3"], errors="coerce").fillna(0)
+    if "distancia_rodoviaria_est_km" in df.columns:
+        df["distancia_rodoviaria_est_km"] = pd.to_numeric(df["distancia_rodoviaria_est_km"], errors="coerce")
+    df["tipo_operacao"] = df["tipo_operacao"].fillna("").astype(str).str.strip()
+    df.loc[df["tipo_operacao"].eq(""), "tipo_operacao"] = "redespacho"
+
+    def _id_valido(valor: Any) -> bool:
+        try:
+            if pd.isna(valor):
+                return False
+        except Exception:
+            pass
+        return str(valor).strip() != ""
+
+    ids_gerados = 0
+    ids_usados: set[str] = set()
+    for i in range(len(df)):
+        valor_existente = df.at[i, "id_linha_pipeline"]
+        if _id_valido(valor_existente):
+            candidato = str(valor_existente).strip()
+            sufixo = 1
+            while candidato in ids_usados:
+                candidato = f"{str(valor_existente).strip()}_{sufixo}"
+                sufixo += 1
+            if candidato != str(valor_existente).strip():
+                ids_gerados += 1
+            df.at[i, "id_linha_pipeline"] = candidato
+            ids_usados.add(candidato)
+            continue
+
+        base = "||".join([
+            "REDESPACHO",
+            str(df.at[i, "redespacho_codigo"]),
+            str(df.at[i, "redespacho_transportadora_id"]),
+            str(df.at[i, "redespacho_transportadora_nome"]),
+            str(df.at[i, "nro_documento"]),
+            str(df.at[i, "cte"]),
+            str(df.at[i, "romaneio"]) if "romaneio" in df.columns else "",
+            str(df.at[i, "serie"]) if "serie" in df.columns else "",
+            str(df.at[i, "filial_roteirizacao"]) if "filial_roteirizacao" in df.columns else "",
+            str(df.at[i, "filial_origem"]) if "filial_origem" in df.columns else "",
+            str(df.at[i, "destinatario"]),
+            str(df.at[i, "cidade"]),
+            str(df.at[i, "uf"]),
+            str(df.at[i, "peso_calculado"]),
+            f"SEQ={i}",
+        ])
+        candidato = hashlib.sha1(base.encode("utf-8")).hexdigest()
+        sufixo = 1
+        while candidato in ids_usados:
+            candidato = hashlib.sha1(f"{base}||DUP={sufixo}".encode("utf-8")).hexdigest()
+            sufixo += 1
+        df.at[i, "id_linha_pipeline"] = candidato
+        ids_usados.add(candidato)
+        ids_gerados += 1
+
+    df["id_linha_pipeline"] = df["id_linha_pipeline"].astype(str)
+    return df, ids_gerados
+
 def _executar_redespacho(
     ctx: Dict[str, Any],
     df_carteira_redespacho: pd.DataFrame,
@@ -803,12 +892,12 @@ def _executar_redespacho(
 ) -> None:
     if df_carteira_redespacho is None or len(df_carteira_redespacho) == 0:
         return
+    df_carteira_redespacho, ids_gerados = _preparar_dataframe_redespacho_m4(df_carteira_redespacho)
+    print(f"[M4 REDESPACHO] id_linha_pipeline_gerados={ids_gerados}")
+    print("[M4 REDESPACHO] colunas_preparadas_ok=True")
     fila = _filtrar_nao_alocados(df_carteira_redespacho.copy(), ctx["ids_alocados"])
     if len(fila) == 0:
         return
-    for c in ["id_linha_pipeline", "peso_calculado", "peso_kg", "vol_m3", "redespacho_codigo", "redespacho_transportadora_id", "redespacho_transportadora_nome", "tipo_operacao"]:
-        if c not in fila.columns:
-            fila[c] = np.nan
     fila = fila.loc[fila["redespacho_codigo"].fillna("").astype(str).str.strip().ne("")].copy()
     print(f"[M4 REDESPACHO] total_linhas={len(fila)}")
     codigos = sorted(fila["redespacho_codigo"].fillna("").astype(str).str.strip().unique().tolist())
@@ -891,6 +980,8 @@ def _contabilizar_tentativa(contadores_m4: Dict[str, Any], tent: Dict[str, Any])
 def _filtrar_nao_alocados(df_base: pd.DataFrame, ids_alocados: set[str]) -> pd.DataFrame:
     if len(df_base) == 0:
         return df_base.copy().reset_index(drop=True)
+    if "id_linha_pipeline" not in df_base.columns:
+        raise Exception("DataFrame recebido sem id_linha_pipeline em _filtrar_nao_alocados.")
     mask = ~df_base["id_linha_pipeline"].astype(str).isin(ids_alocados)
     return df_base.loc[mask].copy().reset_index(drop=True)
 

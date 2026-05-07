@@ -107,3 +107,52 @@ def test_sem_redespacho_preserva_fluxo():
     )
     manifestos = out["df_manifestos_fechados_bloco_4"]
     assert "redespacho" not in manifestos.get("tipo_manifesto", pd.Series(dtype="object")).astype(str).tolist()
+
+
+def test_redespacho_sem_id_linha_pipeline_gera_ids_unicos_e_manifesto_rd():
+    redespacho = pd.DataFrame([
+        {"destinatario": "CLIENTE X", "cidade": "SAO PAULO", "uf": "SP", "peso_calculado": 1000, "redespacho_codigo": "1", "redespacho_transportadora_id": "T1", "redespacho_transportadora_nome": "TRANS"},
+        {"destinatario": "CLIENTE X", "cidade": "SAO PAULO", "uf": "SP", "peso_calculado": 1200, "redespacho_codigo": "1", "redespacho_transportadora_id": "T1", "redespacho_transportadora_nome": "TRANS"},
+    ])
+    out = _run(pd.DataFrame([_row("N1", "CLIENTE N", 500)]), redespacho, _veiculos(com_carreta=True))
+    rd = out["df_manifestos_fechados_bloco_4"].loc[lambda d: d["tipo_manifesto"].eq("redespacho")]
+    assert len(rd) == 1
+    itens_rd = out["df_itens_manifestos_fechados_bloco_4"].loc[lambda d: d["tipo_manifesto"].eq("redespacho")]
+    ids = itens_rd["id_linha_pipeline"].astype(str).tolist()
+    assert all(x.strip() != "" for x in ids)
+    assert len(ids) == len(set(ids))
+
+
+def test_redespacho_sem_distancia_rodoviaria_fecha_normalmente():
+    redespacho = pd.DataFrame([
+        {"destinatario": "CLIENTE X", "cidade": "SAO PAULO", "uf": "SP", "peso_calculado": 800, "vol_m3": 1.0, "redespacho_codigo": "1", "redespacho_transportadora_id": "T1", "redespacho_transportadora_nome": "TRANS"},
+    ])
+    out = _run(pd.DataFrame([_row("N1", "CLIENTE N", 500)]), redespacho, _veiculos(com_carreta=True))
+    rd = out["df_manifestos_fechados_bloco_4"].loc[lambda d: d["tipo_manifesto"].eq("redespacho")]
+    assert len(rd) == 1
+
+
+def test_redespacho_sem_cidade_uf_nao_quebra_e_fecha_rd():
+    redespacho = pd.DataFrame([
+        {"destinatario": "CLIENTE X", "peso_calculado": 700, "redespacho_codigo": "1", "redespacho_transportadora_id": "T1", "redespacho_transportadora_nome": "TRANS"},
+    ])
+    out = _run(pd.DataFrame([_row("N1", "CLIENTE N", 500)]), redespacho, _veiculos(com_carreta=True))
+    rd = out["df_manifestos_fechados_bloco_4"].loc[lambda d: d["tipo_manifesto"].eq("redespacho")]
+    assert len(rd) == 1
+
+
+def test_redespacho_acima_capacidade_nao_split_nao_remanescente():
+    redespacho = pd.DataFrame([
+        {"destinatario": "CLIENTE X", "cidade": "SAO PAULO", "uf": "SP", "peso_calculado": 20000, "redespacho_codigo": "1", "redespacho_transportadora_id": "T1", "redespacho_transportadora_nome": "TRANS"},
+        {"destinatario": "CLIENTE X", "cidade": "SAO PAULO", "uf": "SP", "peso_calculado": 20000, "redespacho_codigo": "1", "redespacho_transportadora_id": "T1", "redespacho_transportadora_nome": "TRANS"},
+    ])
+    out = _run(pd.DataFrame([_row("N1", "CLIENTE N", 500)]), redespacho, _veiculos(com_carreta=True))
+    rd = out["df_manifestos_fechados_bloco_4"].loc[lambda d: d["tipo_manifesto"].eq("redespacho")]
+    assert len(rd) == 1
+    assert rd.iloc[0]["veiculo_tipo"] == "CARRETA"
+    assert rd.iloc[0]["redespacho_excede_capacidade"] == True
+    rem = out["df_remanescente_roteirizavel_bloco_4"]
+    itens_rd = out["df_itens_manifestos_fechados_bloco_4"].loc[lambda d: d["tipo_manifesto"].eq("redespacho")]
+    ids_rd = set(itens_rd["id_linha_pipeline"].astype(str).tolist())
+    ids_rem = set(rem.get("id_linha_pipeline", pd.Series(dtype="object")).astype(str).tolist())
+    assert ids_rd.isdisjoint(ids_rem)
