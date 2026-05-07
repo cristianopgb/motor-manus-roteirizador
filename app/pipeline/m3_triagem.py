@@ -7,6 +7,30 @@ import numpy as np
 import pandas as pd
 
 
+def _serie_bool_safe(valor: Any, index: pd.Index) -> pd.Series:
+    if isinstance(valor, pd.Series):
+        serie = valor.copy().reindex(index)
+    else:
+        serie = pd.Series(valor, index=index)
+
+    def _to_bool(x: Any) -> bool:
+        if x is None:
+            return False
+        try:
+            if bool(pd.isna(x)):
+                return False
+        except Exception:
+            pass
+        texto = str(x).strip().lower()
+        if texto in {"sim", "s", "yes", "y", "true", "1"}:
+            return True
+        if texto in {"nao", "não", "n", "no", "false", "0", ""}:
+            return False
+        return bool(x) if isinstance(x, (bool, np.bool_)) else False
+
+    return serie.apply(_to_bool).fillna(False).astype(bool)
+
+
 def _data_agenda_valida(valor: Any) -> bool:
     if pd.isna(valor):
         return False
@@ -61,7 +85,10 @@ def executar_m3_triagem(
     carteira["peso_calculado"] = pd.to_numeric(carteira["peso_calculado"], errors="coerce")
     carteira["redespacho_codigo"] = carteira.get("redespacho_codigo", pd.Series(index=carteira.index, dtype="object")).astype("object")
     carteira["tipo_operacao"] = carteira.get("tipo_operacao", "normal")
-    carteira["redespacho_flag"] = carteira.get("redespacho_flag", False).fillna(False).astype(bool)
+    carteira["redespacho_flag"] = _serie_bool_safe(
+        carteira["redespacho_flag"] if "redespacho_flag" in carteira.columns else pd.Series(False, index=carteira.index),
+        carteira.index,
+    )
     carteira["flag_redespacho"] = (
         carteira["redespacho_flag"]
         | carteira["redespacho_codigo"].fillna("").astype(str).str.strip().ne("")

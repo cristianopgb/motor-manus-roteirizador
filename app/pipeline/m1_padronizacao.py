@@ -565,6 +565,16 @@ def converter_flag_sim_nao(serie: pd.Series) -> pd.Series:
     return serie.apply(_f)
 
 
+def _serie_bool_safe(valor: Any, index: pd.Index) -> pd.Series:
+    if isinstance(valor, pd.Series):
+        serie = valor.copy()
+        serie = serie.reindex(index)
+    else:
+        serie = pd.Series(valor, index=index)
+
+    return converter_flag_sim_nao(serie).fillna(False).astype(bool)
+
+
 def normalizar_chave_texto(serie: pd.Series) -> pd.Series:
     return serie.apply(
         lambda x: remover_acentos(str(x)).upper().strip() if pd.notna(x) else np.nan
@@ -968,14 +978,23 @@ def executar_m1_padronizacao(
     else:
         carteira["veiculo_exclusivo_flag"] = False
 
-    carteira["redespacho_codigo"] = carteira.get("redespacho_codigo", np.nan).apply(normalizar_texto_basico)
+    carteira["redespacho_codigo"] = carteira.get(
+        "redespacho_codigo",
+        pd.Series(np.nan, index=carteira.index),
+    ).apply(normalizar_texto_basico)
     carteira["redespacho_transportadora_id"] = carteira.get("redespacho_transportadora_id", np.nan).apply(normalizar_texto_basico)
     carteira["redespacho_transportadora_nome"] = carteira.get("redespacho_transportadora_nome", np.nan).apply(normalizar_texto_basico)
-    carteira["redespacho_flag"] = converter_flag_sim_nao(carteira.get("redespacho_flag", False)).fillna(False)
-    carteira["flag_redespacho_codigo_preenchido"] = carteira["redespacho_codigo"].notna()
-    carteira["flag_redespacho_codigo_ausente"] = carteira["redespacho_flag"] & carteira["redespacho_codigo"].isna()
-    carteira["redespacho_flag"] = carteira["redespacho_flag"] | carteira["flag_redespacho_codigo_preenchido"]
+    codigo_preenchido = carteira["redespacho_codigo"].fillna("").astype(str).str.strip().ne("")
+    carteira["redespacho_flag"] = _serie_bool_safe(
+        carteira.get("redespacho_flag", pd.Series(False, index=carteira.index)),
+        carteira.index,
+    )
+    carteira["flag_redespacho_codigo_preenchido"] = codigo_preenchido.astype(bool)
+    carteira["flag_redespacho_codigo_ausente"] = carteira["redespacho_flag"].astype(bool) & ~codigo_preenchido.astype(bool)
+    carteira["redespacho_flag"] = (carteira["redespacho_flag"] | codigo_preenchido.astype(bool)).astype(bool)
     carteira["tipo_operacao"] = np.where(carteira["redespacho_flag"], "redespacho", "normal")
+    print(f"[M1 REDESPACHO] total_flag_redespacho={int(carteira['redespacho_flag'].sum())}")
+    print(f"[M1 REDESPACHO] total_codigo_ausente={int(carteira['flag_redespacho_codigo_ausente'].sum())}")
 
     # --------------------------------------------------------
     # REGRA OFICIAL DE PESO DO MOTOR
