@@ -609,8 +609,18 @@ def _normalizar_itens_manifestos(df: pd.DataFrame) -> pd.DataFrame:
     return out.reset_index(drop=True)
 
 
-def _normalizar_remanescente(df: pd.DataFrame) -> pd.DataFrame:
+def _normalizar_remanescente(df: Optional[pd.DataFrame]) -> pd.DataFrame:
+    if df is None:
+        return pd.DataFrame(columns=COLS_REMANESCENTE_OBRIGATORIAS)
+
     out = df.copy()
+
+    if len(out) == 0:
+        for col in COLS_REMANESCENTE_OBRIGATORIAS:
+            if col not in out.columns:
+                out[col] = pd.Series(dtype="object")
+        return out.reindex(columns=COLS_REMANESCENTE_OBRIGATORIAS).reset_index(drop=True)
+
     _validar_colunas_minimas(out, COLS_REMANESCENTE_OBRIGATORIAS, "df_remanescente_m5_4")
 
     out["id_linha_pipeline"] = out["id_linha_pipeline"].astype(str)
