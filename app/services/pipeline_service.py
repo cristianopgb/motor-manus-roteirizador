@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import traceback
 import unicodedata
 import uuid
 from typing import Any, Dict, List
@@ -49,6 +50,7 @@ MODO_PRODUCAO_CONTRATO_SISTEMA1 = True
 PERSISTIR_AUDITORIA_MODULAR_PADRAO = False
 RETORNAR_AUDITORIA_INTERNA_PADRAO = False
 LOG_VERBOSE_PADRAO = False
+_ULTIMA_ETAPA_PIPELINE = "INICIO"
 
 
 
@@ -58,6 +60,12 @@ def _agora() -> float:
 
 def _duracao_ms(inicio: float) -> float:
     return round((time.perf_counter() - inicio) * 1000, 2)
+
+
+def _definir_etapa_pipeline(etapa: str) -> str:
+    global _ULTIMA_ETAPA_PIPELINE
+    _ULTIMA_ETAPA_PIPELINE = etapa
+    return etapa
 
 
 def _safe_len(obj: Any) -> int:
@@ -831,6 +839,7 @@ def _executar_m0_adapter(contexto: PipelineContext) -> Dict[str, Any]:
 
 def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     inicio_total = _agora()
+    etapa_atual = _definir_etapa_pipeline("INICIO")
     logs: List[Dict[str, Any]] = []
     metricas_tempo: Dict[str, float] = {}
     debug = _is_debug(payload)
@@ -863,6 +872,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # =========================================================================================
     # PAYLOAD -> CONTEXTO
     # =========================================================================================
+    etapa_atual = _definir_etapa_pipeline("PAYLOAD")
     t0 = _agora()
     contexto = normalizar_payload_para_pipeline(payload)
     tempo_payload = _duracao_ms(t0)
@@ -908,6 +918,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # =========================================================================================
     # M0
     # =========================================================================================
+    etapa_atual = _definir_etapa_pipeline("M0")
     t0 = _agora()
     resultado_m0 = _executar_m0_adapter(contexto)
     tempo_m0 = _duracao_ms(t0)
@@ -946,6 +957,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # =========================================================================================
     # M1
     # =========================================================================================
+    etapa_atual = _definir_etapa_pipeline("M1")
     t0 = _agora()
     resultado_m1 = executar_m1_padronizacao(
         df_carteira_raw=resultado_m0["df_carteira_raw"],
@@ -998,6 +1010,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # =========================================================================================
     # M2
     # =========================================================================================
+    etapa_atual = _definir_etapa_pipeline("M2")
     t0 = _agora()
     df_carteira_enriquecida, resumo_m2 = executar_m2_enriquecimento(
         df_carteira_tratada=df_carteira_tratada,
@@ -1038,6 +1051,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # =========================================================================================
     # M3
     # =========================================================================================
+    etapa_atual = _definir_etapa_pipeline("M3")
     t0 = _agora()
     df_carteira_triagem, meta_m3 = executar_m3_triagem(
         df_carteira_enriquecida=df_carteira_enriquecida,
@@ -1117,6 +1131,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # =========================================================================================
     # M3.1
     # =========================================================================================
+    etapa_atual = _definir_etapa_pipeline("M3.1")
     t0 = _agora()
     df_input_oficial_bloco_4, meta_m31 = executar_m3_1_validacao_fronteira(
         df_carteira_roteirizavel=df_carteira_roteirizavel,
@@ -1202,6 +1217,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # =========================================================================================
     # M4
     # =========================================================================================
+    etapa_atual = _definir_etapa_pipeline("M4")
     # OBS AUDITORIA FUTURA (M4+):
     # Quando as etapas M4/M5/M6/M7 forem religadas para persistência de auditoria,
     # priorizar sempre os DATAFRAMES OFICIAIS DE ITENS de cada etapa (não apenas resumos/manifestos agregados),
@@ -3431,6 +3447,7 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     # =========================================================================================
     # M7
     # =========================================================================================
+    etapa_atual = _definir_etapa_pipeline("M7")
     df_manifestos_m6_2_input_m7 = _copiar_ou_vazio(df_manifestos_m6_2, colunas=COLS_MANIFESTOS_OBRIGATORIAS)
     df_itens_manifestos_m6_2_input_m7 = _copiar_ou_vazio(df_itens_manifestos_m6_2)
     df_geo_tratado_input_m7 = _copiar_ou_vazio(df_geo_tratado)
@@ -3733,18 +3750,28 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         return _executar_pipeline_core(payload)
     except Exception as exc:
         erro_tecnico = str(exc)
+        etapa_erro = _ULTIMA_ETAPA_PIPELINE or "DESCONHECIDA"
+        traceback_completo = traceback.format_exc()
+        print(f"[PIPELINE ERRO] etapa={etapa_erro}", flush=True)
+        print(f"[PIPELINE ERRO] mensagem={erro_tecnico}", flush=True)
+        print(f"[PIPELINE ERRO] traceback={traceback_completo}", flush=True)
         logs = [
             _log(
                 modulo="pipeline_service",
                 status="erro",
                 mensagem="Falha durante execução do pipeline",
-                extra={"erro_tecnico": erro_tecnico},
+                extra={
+                    "erro_tecnico": erro_tecnico,
+                    "etapa_erro": etapa_erro,
+                    "traceback": traceback_completo,
+                },
             )
         ]
         return {
             "status": "erro",
             "mensagem": erro_tecnico,
-            "pipeline_real_ate": "ERRO",
+            "pipeline_real_ate": f"ERRO_EM_{etapa_erro}",
+            "etapa_erro": etapa_erro,
             "modo_resposta": "contrato_sistema1_m7_erro",
             "resposta_truncada": False,
             "teste_id_auditoria": None,
@@ -3804,5 +3831,6 @@ def executar_pipeline(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             },
             "auditoria_m7_meta": {},
             "erro_tecnico": erro_tecnico,
+            "traceback": traceback_completo,
             "logs": logs,
         }
