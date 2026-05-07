@@ -113,6 +113,140 @@ def _validar_colunas(df: pd.DataFrame, obrigatorias: List[str], nome_df: str) ->
         raise Exception(f"M7 encontrou colunas obrigatórias ausentes em {nome_df}: {faltando}")
 
 
+def _eh_manifesto_redespacho(
+    manifesto_id: Any,
+    grupo_itens: pd.DataFrame,
+    manifesto_row: Optional[pd.Series] = None,
+) -> bool:
+    manifesto_txt = _safe_text(manifesto_id)
+    if manifesto_txt.startswith("RD_"):
+        return True
+
+    candidatos_linha = [
+        "tipo_manifesto",
+        "tipo_operacao_manifesto",
+        "origem_etapa",
+        "redespacho_flag",
+    ]
+    if manifesto_row is not None:
+        if _safe_text(manifesto_row.get("tipo_manifesto")).lower() == "redespacho":
+            return True
+        if _safe_text(manifesto_row.get("tipo_operacao_manifesto")).lower() == "redespacho":
+            return True
+        if _safe_text(manifesto_row.get("origem_etapa")).lower() == "4a_redespacho":
+            return True
+        if _to_bool(manifesto_row.get("redespacho_flag")):
+            return True
+        for col in candidatos_linha:
+            if col in manifesto_row.index:
+                val = manifesto_row.get(col)
+                if col == "redespacho_flag" and _to_bool(val):
+                    return True
+
+    if "tipo_operacao" in grupo_itens.columns and (
+        grupo_itens["tipo_operacao"].fillna("").astype(str).str.strip().str.lower() == "redespacho"
+    ).any():
+        return True
+
+    if "redespacho_codigo" in grupo_itens.columns:
+        cod = grupo_itens["redespacho_codigo"].fillna("").astype(str).str.strip()
+        if (cod != "").any():
+            return True
+
+    return False
+
+
+def _processar_manifesto_redespacho_m7(
+    manifesto_id: str,
+    grupo: pd.DataFrame,
+    filial_cidade: Optional[str],
+    filial_uf: Optional[str],
+) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, Any], Dict[str, Any], pd.DataFrame]:
+    grupo_seq = grupo.copy().reset_index(drop=True)
+    qtd_docs = len(grupo_seq)
+    codigo = _safe_text(grupo_seq.get("redespacho_codigo", pd.Series([""])).iloc[0]) or "SEM_CODIGO"
+    transportadora_nome = _safe_text(grupo_seq.get("redespacho_transportadora_nome", pd.Series([""])).iloc[0])
+    if not transportadora_nome:
+        transportadora_nome = "Transportadora redespacho"
+    chave_parada = f"REDESPACHO|{codigo}"
+    cidade_uf = "|".join([x for x in [_safe_text(filial_cidade), _safe_text(filial_uf)] if x])
+
+    grupo_seq["manifesto_id"] = manifesto_id
+    grupo_seq["ordem_entrega_doc_m7"] = np.arange(1, qtd_docs + 1)
+    grupo_seq["ordem_carregamento_doc_m7"] = np.arange(qtd_docs, 0, -1)
+    grupo_seq["ordem_entrega_parada_m7"] = 1
+    grupo_seq["ordem_parada_m7"] = 1
+    if "sequencia_entrega_m7" in grupo_seq.columns:
+        grupo_seq["sequencia_entrega_m7"] = np.arange(1, qtd_docs + 1)
+    grupo_seq["chave_parada_seq_m7"] = chave_parada
+    if cidade_uf:
+        grupo_seq["chave_cidade_seq_m7"] = cidade_uf
+    grupo_seq["tipo_parada"] = "redespacho_coleta_filial"
+    grupo_seq["sequenciamento_aplicavel"] = False
+    grupo_seq["status_sequenciamento_m7"] = "nao_aplicavel_redespacho"
+    grupo_seq["motivo_status_sequenciamento_m7"] = "Redespacho: coleta na filial pela transportadora parceira"
+    grupo_seq["metodo_sequenciamento_parada_m7"] = "redespacho_parada_unica"
+    grupo_seq["metodo_sequenciamento_cidade_m7"] = "redespacho_parada_unica"
+    grupo_seq["fonte_filial_m7"] = "contexto"
+    grupo_seq["justificativa_ordem_entrega_m7"] = "Redespacho: sequência técnica para contrato; distribuição feita por transportadora parceira"
+    grupo_seq["redespacho_flag"] = True
+    grupo_seq["tipo_operacao"] = "redespacho"
+    grupo_seq["tipo_manifesto"] = grupo_seq.get("tipo_manifesto", pd.Series([None] * qtd_docs)).replace("", np.nan).fillna("redespacho")
+    grupo_seq["tipo_operacao_manifesto"] = grupo_seq.get("tipo_operacao_manifesto", pd.Series([None] * qtd_docs)).replace("", np.nan).fillna("redespacho")
+
+    grupo_seq["cidade"] = grupo_seq["cidade"].replace("", np.nan).fillna(_safe_text(filial_cidade))
+    grupo_seq["uf"] = grupo_seq["uf"].replace("", np.nan).fillna(_safe_text(filial_uf))
+    grupo_seq["destinatario"] = grupo_seq["destinatario"].replace("", np.nan).fillna("REDESPACHO")
+    grupo_seq["nro_documento"] = grupo_seq["nro_documento"].replace("", np.nan).fillna(grupo_seq["id_linha_pipeline"])
+    grupo_seq["peso_calculado"] = pd.to_numeric(grupo_seq["peso_calculado"], errors="coerce").fillna(
+        pd.to_numeric(grupo_seq.get("peso_seq_m7", 0), errors="coerce")
+    ).fillna(0)
+
+    peso_total = float(pd.to_numeric(grupo_seq.get("peso_calculado", 0), errors="coerce").fillna(0).sum())
+    lat_ref = pd.to_numeric(grupo_seq.get("latitude_filial_m7"), errors="coerce").dropna()
+    lon_ref = pd.to_numeric(grupo_seq.get("longitude_filial_m7"), errors="coerce").dropna()
+
+    df_parada_redespacho = pd.DataFrame([{
+        "manifesto_id": manifesto_id,
+        "ordem_entrega_parada_m7": 1,
+        "chave_parada_seq_m7": chave_parada,
+        "destinatario_ref_m7": transportadora_nome,
+        "cidade_ref_m7": _safe_text(filial_cidade),
+        "uf_ref_m7": _safe_text(filial_uf),
+        "bucket_prioridade_m7": 9,
+        "folga_min_m7": 9999,
+        "peso_total_m7": peso_total,
+        "distancia_origem_parada_km_m7": 0,
+        "lat_ref_m7": float(lat_ref.iloc[0]) if len(lat_ref) else np.nan,
+        "lon_ref_m7": float(lon_ref.iloc[0]) if len(lon_ref) else np.nan,
+        "tipo_parada": "redespacho_coleta_filial",
+        "sequenciamento_aplicavel": False,
+        "redespacho_codigo": codigo,
+        "redespacho_transportadora_nome": transportadora_nome,
+    }])
+
+    resumo_manifesto = {
+        "manifesto_id": manifesto_id, "filial_cidade_resolvida_m7": _safe_text(filial_cidade), "filial_uf_resolvida_m7": _safe_text(filial_uf),
+        "fonte_filial_m7": "contexto", "qtd_docs_manifesto_m7": qtd_docs, "qtd_paradas_manifesto_m7": 1, "qtd_cidades_manifesto_m7": 1,
+        "primeira_entrega_parada_m7": "REDESPACHO", "ultima_entrega_parada_m7": "REDESPACHO", "primeira_cidade_m7": cidade_uf,
+        "ultima_cidade_m7": cidade_uf, "status_sequenciamento_m7": "nao_aplicavel_redespacho", "metodo_predominante_m7": "redespacho_parada_unica",
+        "fator_km_rodoviario_real_m7": None, "km_total_sequencia_paradas_m7": 0, "km_total_sequencia_cidades_m7": 0,
+        "tipo_manifesto": "redespacho", "tipo_operacao_manifesto": "redespacho", "redespacho_flag": True,
+        "redespacho_codigo": codigo, "redespacho_transportadora_nome": transportadora_nome, "sequenciamento_aplicavel": False,
+    }
+    tentativa_manifesto = {
+        "manifesto_id": manifesto_id, "resultado": "nao_aplicavel_redespacho", "motivo": "Redespacho: coleta na filial pela transportadora parceira",
+        "fonte_filial_m7": "contexto", "qtd_docs": qtd_docs, "qtd_paradas": 1, "qtd_cidades": 1, "km_total_sequencia_paradas_m7": 0,
+    }
+    auditoria_manifesto = pd.DataFrame([{
+        "manifesto_id": manifesto_id, "status_sequenciamento_m7": "nao_aplicavel_redespacho", "metodo_predominante_m7": "redespacho_parada_unica",
+        "qtd_docs": qtd_docs, "qtd_paradas": 1, "qtd_cidades": 1, "km_total_sequencia_cidades_m7": 0,
+        "km_total_sequencia_docs_intra_cidade_m7": 0, "km_total_sequencia_paradas_m7": 0,
+        "trilha_sequenciamento_cidades_m7": [], "trilha_sequenciamento_docs_m7": [],
+    }])
+    return grupo_seq, df_parada_redespacho, resumo_manifesto, tentativa_manifesto, auditoria_manifesto
+
+
 # =========================================================================================
 # DISTÂNCIA
 # =========================================================================================
@@ -1729,11 +1863,29 @@ def executar_m7_sequenciamento_entregas(
     cidades_resumo_manifestos: List[pd.DataFrame] = []
     paradas_manifestos: List[pd.DataFrame] = []
 
+    mapa_manifesto_rows = df_manifestos.set_index("manifesto_id").to_dict(orient="index")
+
     for manifesto_id, grupo in df_itens.groupby("manifesto_id", dropna=False):
         grupo = grupo.copy().reset_index(drop=True)
         fonte_filial_manifesto = fonte_filial_global or "fallback_proximidade"
+        manifesto_row_dict = mapa_manifesto_rows.get(str(manifesto_id), {})
+        manifesto_row = pd.Series(manifesto_row_dict) if manifesto_row_dict else None
 
         try:
+            if _eh_manifesto_redespacho(manifesto_id, grupo, manifesto_row):
+                grupo_seq, df_paradas_seq, resumo_manifesto, tentativa_manifesto, auditoria_manifesto_df = _processar_manifesto_redespacho_m7(
+                    manifesto_id=str(manifesto_id),
+                    grupo=grupo,
+                    filial_cidade=filial_cidade_global,
+                    filial_uf=filial_uf_global,
+                )
+                resultados.append(grupo_seq)
+                paradas_manifestos.append(df_paradas_seq)
+                resumos_manifestos.append(resumo_manifesto)
+                tentativas.append(tentativa_manifesto)
+                auditorias_manifestos.extend(auditoria_manifesto_df.to_dict(orient="records"))
+                print(f"[M7 REDESPACHO] manifesto={manifesto_id} docs={len(grupo_seq)} parada_unica=1")
+                continue
             if grupo["latitude_dest_m7"].isna().any() or grupo["longitude_dest_m7"].isna().any():
                 raise Exception(
                     f"Manifesto {manifesto_id} ainda possui coordenada de destino nula no contrato recebido."
