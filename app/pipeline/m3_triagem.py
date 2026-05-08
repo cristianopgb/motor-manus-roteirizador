@@ -1,10 +1,37 @@
 from __future__ import annotations
 
+import unicodedata
 from datetime import datetime
 from typing import Any, Dict, Tuple
 
 import numpy as np
 import pandas as pd
+
+
+def _normalizar_status_conf(valor: Any) -> str:
+    if valor is None:
+        return ""
+    try:
+        if bool(pd.isna(valor)):
+            return ""
+    except Exception:
+        pass
+
+    texto = str(valor).strip()
+    if texto == "":
+        return ""
+
+    texto = " ".join(texto.split())
+    texto = "".join(
+        c for c in unicodedata.normalize("NFKD", texto)
+        if not unicodedata.combining(c)
+    )
+    texto = texto.upper()
+
+    if texto in {"", "-", "NULL", "NAN"}:
+        return ""
+
+    return texto
 
 
 def _serie_bool_safe(valor: Any, index: pd.Index) -> pd.Series:
@@ -95,6 +122,36 @@ def executar_m3_triagem(
         | carteira["tipo_operacao"].fillna("").astype(str).str.lower().eq("redespacho")
     )
 
+    coluna_conf = "conferencia" if "conferencia" in carteira.columns else None
+    if coluna_conf is None:
+        for candidata in ("conf_status", "conf", "status_conferencia"):
+            if candidata in carteira.columns:
+                coluna_conf = candidata
+                break
+
+    if coluna_conf is None:
+        raise Exception(
+            "M3 não recebeu a coluna de conferência obrigatória. Esperado uma das colunas: conferencia, conf_status, conf, status_conferencia."
+        )
+
+    conf_status_normalizado = carteira[coluna_conf].apply(_normalizar_status_conf)
+    mask_conf_valida = conf_status_normalizado.isin(["EM CONFERENCIA", "CONFERENCIA FINALIZADA"])
+    total_conf_ausente = int((~mask_conf_valida).sum())
+    total_conf_em_conferencia = int(conf_status_normalizado.eq("EM CONFERENCIA").sum())
+    total_conf_finalizada = int(conf_status_normalizado.eq("CONFERENCIA FINALIZADA").sum())
+    total_conf_valida = int(mask_conf_valida.sum())
+    print(f"[M3 CONF] total_conf_ausente={total_conf_ausente}")
+    print(f"[M3 CONF] total_conf_valida={total_conf_valida}")
+
+    df_conf_excecoes = carteira.loc[~mask_conf_valida].copy()
+    if not df_conf_excecoes.empty:
+        df_conf_excecoes["status_triagem"] = "excecao_triagem"
+        df_conf_excecoes["motivo_triagem"] = "conf_ausente"
+        df_conf_excecoes["grupo_saida"] = "excecao_triagem"
+        df_conf_excecoes["motivo_detalhado"] = "Carga sem status de conferência informado na coluna Conf."
+
+    carteira = carteira.loc[mask_conf_valida].copy()
+
     df_redespacho_base = carteira.loc[carteira["flag_redespacho"]].copy()
     carteira = carteira.loc[~carteira["flag_redespacho"]].copy()
 
@@ -175,7 +232,7 @@ def executar_m3_triagem(
         & mask_folga_lt_2
     ).astype(bool)
 
-    df_carteira_triagem = pd.concat([carteira.copy(), df_redespacho_excecoes], ignore_index=True, sort=False)
+    df_carteira_triagem = pd.concat([carteira.copy(), df_redespacho_excecoes, df_conf_excecoes], ignore_index=True, sort=False)
 
     df_carteira_roteirizavel = (
         carteira.loc[carteira["status_triagem"] == "roteirizavel"]
@@ -224,6 +281,9 @@ def executar_m3_triagem(
         df_carteira_agendamento_futuro=df_carteira_agendamento_futuro,
         df_carteira_agendas_vencidas=df_carteira_agendas_vencidas,
         df_carteira_redespacho=df_carteira_redespacho,
+        total_conf_ausente=total_conf_ausente,
+        total_conf_em_conferencia=total_conf_em_conferencia,
+        total_conf_finalizada=total_conf_finalizada,
         data_base_roteirizacao=data_base_roteirizacao,
         caminhos_pipeline=caminhos_pipeline or {},
     )
@@ -440,6 +500,9 @@ def _montar_resumo_m3(
     df_carteira_agendamento_futuro: pd.DataFrame,
     df_carteira_agendas_vencidas: pd.DataFrame,
     df_carteira_redespacho: pd.DataFrame,
+    total_conf_ausente: int,
+    total_conf_em_conferencia: int,
+    total_conf_finalizada: int,
     data_base_roteirizacao: datetime,
     caminhos_pipeline: Dict[str, Any],
 ) -> Dict[str, Any]:
@@ -476,6 +539,9 @@ def _montar_resumo_m3(
         "total_transportadoras_redespacho": int(df_carteira_redespacho["redespacho_codigo"].dropna().astype(str).str.strip().replace("", np.nan).dropna().nunique()) if "redespacho_codigo" in df_carteira_redespacho.columns else 0,
         "peso_total_redespacho": float(pd.to_numeric(df_carteira_redespacho["peso_calculado"], errors="coerce").fillna(0).sum()) if "peso_calculado" in df_carteira_redespacho.columns else 0.0,
         "carteira_excecoes_triagem": int((df_carteira_triagem["status_triagem"] == "excecao_triagem").sum()),
+        "total_conf_ausente": int(total_conf_ausente),
+        "total_conf_em_conferencia": int(total_conf_em_conferencia),
+        "total_conf_finalizada": int(total_conf_finalizada),
         "agendadas_na_roteirizavel": int(df_carteira_roteirizavel["data_agenda"].notna().sum()),
         "leadtime_na_roteirizavel": int(df_carteira_roteirizavel["data_agenda"].isna().sum()),
         "agendadas_folga_igual_2_em_agendamento_futuro": qtd_folga_2_futuro,
