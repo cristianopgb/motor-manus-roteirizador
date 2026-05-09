@@ -172,8 +172,8 @@ def _candidatos_complemento(
                 return True
         except Exception:
             pass
-        from app.pipeline.m5_common import veiculo_compativel
-        return veiculo_compativel(tipo, restricao)
+        from app.pipeline.m5_common import veiculo_compativel_com_restricao
+        return veiculo_compativel_com_restricao(tipo, restricao)
 
     mask_compativel = df_remanescente.apply(_compativel, axis=1)
     mask_peso       = pd.to_numeric(df_remanescente["peso_calculado"], errors="coerce").fillna(0) <= gap_kg

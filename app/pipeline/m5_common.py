@@ -697,7 +697,7 @@ def menor_perfil_cadastrado(df_veiculos: pd.DataFrame) -> pd.Series:
 
 # =========================================================================================
 # RESTRIÇÃO DE VEÍCULO
-# REGRA VALIDADA COM VOCÊS: o veículo marcado é o permitido / exigido
+# REGRA ATUAL: os perfis informados em restricao_veiculo são perfis BLOQUEADOS/PROIBIDOS
 # =========================================================================================
 def normalizar_token_restricao(x: Any) -> str:
     if x is None:
@@ -755,7 +755,7 @@ def tokens_restricao_valor(valor: Any) -> set[str]:
     if txt == "":
         return set()
 
-    partes = re.split(r"[;,|/]+", txt)
+    partes = re.split(r"[;,|]+", txt)
     tokens: set[str] = set()
 
     for parte in partes:
@@ -767,12 +767,12 @@ def tokens_restricao_valor(valor: Any) -> set[str]:
 
 
 def veiculo_compativel_com_restricao(veiculo_tipo: Any, restricao_valor: Any) -> bool:
-    tokens_restricao = tokens_restricao_valor(restricao_valor)
-    if len(tokens_restricao) == 0:
+    tokens_bloqueados = tokens_restricao_valor(restricao_valor)
+    if len(tokens_bloqueados) == 0:
         return True
 
     tokens_veiculo = expandir_alias_restricao(veiculo_tipo)
-    return len(tokens_restricao & tokens_veiculo) > 0
+    return len(tokens_bloqueados & tokens_veiculo) == 0
 
 
 def grupo_respeita_restricao_veiculo(df_itens: pd.DataFrame, vehicle_row: pd.Series) -> bool:

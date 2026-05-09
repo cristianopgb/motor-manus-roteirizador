@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from app.pipeline.m5_common import veiculo_compativel_com_restricao
+
 
 # =========================================================================================
 # M6.2 - COMPLEMENTO DE OCUPAÇÃO POR ENCAIXE DE FOLGA
@@ -891,9 +893,9 @@ def _simular_adicao_item_por_folga(
     if _txt_norm(item.get("mesorregiao", "")) != meso_manifesto:
         return False, "Item está em mesorregião diferente do manifesto.", comparativo
 
-    restricao_item = _txt_norm(item.get("restricao_veiculo", ""))
-    if restricao_item != "" and perfil_manifesto != "" and restricao_item != perfil_manifesto:
-        return False, "Restrição de veículo do item é incompatível com o perfil do manifesto.", comparativo
+    restricao_item = item.get("restricao_veiculo", "")
+    if perfil_manifesto != "" and not veiculo_compativel_com_restricao(perfil_manifesto, restricao_item):
+        return False, "perfil_bloqueado_por_restricao_veiculo", comparativo
 
     if float(estado_depois["ocupacao_final_m6_2"]) > 100.0:
         return False, "Item faria o manifesto ultrapassar 100% de ocupação.", comparativo
