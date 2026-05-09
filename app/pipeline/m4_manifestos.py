@@ -107,7 +107,7 @@ def _tokens_restricao(valor: Any) -> set:
     txt = str(valor).strip()
     if not txt:
         return set()
-    partes = re.split(r"[;,|/]+", txt)
+    partes = re.split(r"[;,|]+", txt)
     tokens: set = set()
     for p in partes:
         t = _normalizar_token(p)
@@ -121,7 +121,7 @@ def _veiculo_compativel(tipo_veiculo: Any, restricao: Any) -> bool:
     if not tokens_r:
         return True
     tokens_v = _expandir_alias(tipo_veiculo)
-    return bool(tokens_r & tokens_v)
+    return not bool(tokens_r & tokens_v)
 
 
 def _grupo_compativel_com_veiculo(df_itens: pd.DataFrame, veiculo: pd.Series) -> bool:

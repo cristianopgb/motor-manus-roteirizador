@@ -156,3 +156,43 @@ def test_redespacho_acima_capacidade_nao_split_nao_remanescente():
     ids_rd = set(itens_rd["id_linha_pipeline"].astype(str).tolist())
     ids_rem = set(rem.get("id_linha_pipeline", pd.Series(dtype="object")).astype(str).tolist())
     assert ids_rd.isdisjoint(ids_rem)
+
+
+def test_redespacho_todos_perfis_bloqueados_vira_nao_roteirizado():
+    redespacho = pd.DataFrame([
+        {
+            "id_linha_pipeline": "R1",
+            "destinatario": "CLIENTE X",
+            "cidade": "SAO PAULO",
+            "uf": "SP",
+            "peso_calculado": 25000,
+            "vol_m3": 1.0,
+            "redespacho_codigo": "1",
+            "redespacho_transportadora_id": "T1",
+            "redespacho_transportadora_nome": "TRANS",
+            "restricao_veiculo": "VUC, 3/4, TOCO, TRUCK, CARRETA",
+        },
+        {
+            "id_linha_pipeline": "R2",
+            "destinatario": "CLIENTE X",
+            "cidade": "SAO PAULO",
+            "uf": "SP",
+            "peso_calculado": 25000,
+            "vol_m3": 1.0,
+            "redespacho_codigo": "1",
+            "redespacho_transportadora_id": "T1",
+            "redespacho_transportadora_nome": "TRANS",
+            "restricao_veiculo": "VUC, 3/4, TOCO, TRUCK, CARRETA",
+        },
+    ])
+    out = _run(pd.DataFrame([_row("N1", "CLIENTE N", 500)]), redespacho, _veiculos(com_carreta=True))
+    rd = out["df_manifestos_fechados_bloco_4"].loc[lambda d: d["tipo_manifesto"].eq("redespacho")]
+    assert len(rd) == 0
+
+    rem = out["df_remanescente_roteirizavel_bloco_4"]
+    rem_ids = set(rem.get("id_linha_pipeline", pd.Series(dtype="object")).astype(str).tolist())
+    assert {"R1", "R2"}.issubset(rem_ids)
+    rem_rd = rem.loc[rem["id_linha_pipeline"].astype(str).isin(["R1", "R2"])].copy()
+    assert (rem_rd["motivo_final_remanescente_m4"] == "perfil_bloqueado_por_restricao_veiculo").all()
+    assert (rem_rd["motivo_nao_roteirizado"] == "perfil_bloqueado_por_restricao_veiculo").all()
+    assert (rem_rd["status_roteirizacao"] == "nao_roteirizado").all()

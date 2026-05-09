@@ -171,7 +171,7 @@ def _normalizar_str(x: Any) -> str:
 
 # ============================================================
 # RESTRIÇÃO DE VEÍCULO
-# REGRA VALIDADA: o veículo marcado é o permitido / exigido
+# REGRA ATUAL: os perfis informados em restricao_veiculo são perfis BLOQUEADOS/PROIBIDOS
 # ============================================================
 
 def _normalizar_token_restricao(x: Any) -> str:
@@ -230,7 +230,7 @@ def _tokens_restricao_valor(valor: Any) -> set[str]:
     if txt == "":
         return set()
 
-    partes = re.split(r"[;,|/]+", txt)
+    partes = re.split(r"[;,|]+", txt)
     tokens: set[str] = set()
 
     for parte in partes:
@@ -242,12 +242,12 @@ def _tokens_restricao_valor(valor: Any) -> set[str]:
 
 
 def _veiculo_compativel_com_restricao(veiculo_tipo: Any, restricao_valor: Any) -> bool:
-    tokens_restricao = _tokens_restricao_valor(restricao_valor)
-    if len(tokens_restricao) == 0:
+    tokens_bloqueados = _tokens_restricao_valor(restricao_valor)
+    if len(tokens_bloqueados) == 0:
         return True
 
     tokens_veiculo = _expandir_alias_restricao(veiculo_tipo)
-    return len(tokens_restricao & tokens_veiculo) > 0
+    return len(tokens_bloqueados & tokens_veiculo) == 0
 
 
 def _combo_respeita_restricao_veiculo(df_combo: pd.DataFrame, veic: pd.Series) -> bool:
@@ -735,6 +735,7 @@ def _inicializar_contexto_execucao() -> Dict[str, Any]:
         "itens_manifestos_fechados": [],
         "tentativas_fechamento": [],
         "ids_alocados": set(),
+        "ids_bloqueados_redespacho": set(),
         "contador_manifesto": 1,
         "contador_manifesto_redespacho": 1,
     }
@@ -934,6 +935,18 @@ def _executar_redespacho(
                 break
         if escolhido_idx is None:
             candidatos = perfis_disponiveis.copy()
+            candidatos = candidatos.loc[candidatos.apply(lambda row: _combo_respeita_restricao_veiculo(pool, catalogo_veiculos.loc[int(row["index"])]), axis=1)].copy()
+            if candidatos.empty:
+                ids_pool = set(pool["id_linha_pipeline"].astype(str).tolist())
+                ctx["ids_bloqueados_redespacho"].update(ids_pool)
+                ctx["tentativas_fechamento"].append({
+                    "etapa_fechamento": "4A_redespacho",
+                    "tipo_tentativa": "redespacho",
+                    "redespacho_codigo": str(codigo),
+                    "resultado_teste": "rejeitado",
+                    "motivo_reprovacao": "perfil_bloqueado_por_restricao_veiculo|restricao_veiculo_incompativel",
+                })
+                continue
             candidatos["tipo_norm"] = candidatos["tipo"].astype(str).str.upper().str.strip()
             if (candidatos["tipo_norm"] == "CARRETA").any():
                 escolhido = candidatos.loc[candidatos["tipo_norm"] == "CARRETA"].iloc[-1]
@@ -1650,10 +1663,25 @@ def _montar_df_nao_roteirizados_bloco_4(df_remanescente: pd.DataFrame) -> pd.Dat
     if "motivo_final_remanescente_m4" not in df_out.columns:
         df_out["motivo_final_remanescente_m4"] = "remanescente_sem_motivo_informado"
 
-    df_out["status_roteirizacao"] = "remanescente_bloco_4"
+    if "status_roteirizacao" not in df_out.columns:
+        df_out["status_roteirizacao"] = "remanescente_bloco_4"
+    else:
+        df_out["status_roteirizacao"] = df_out["status_roteirizacao"].where(
+            df_out["status_roteirizacao"].astype(str).str.strip() != "",
+            "remanescente_bloco_4",
+        )
     df_out["origem_bloco"] = "M4"
-    df_out["segue_para_proximo_bloco"] = True
-    df_out["motivo_nao_roteirizado"] = df_out["motivo_final_remanescente_m4"]
+    if "segue_para_proximo_bloco" not in df_out.columns:
+        df_out["segue_para_proximo_bloco"] = True
+    else:
+        df_out["segue_para_proximo_bloco"] = df_out["segue_para_proximo_bloco"].fillna(True)
+    if "motivo_nao_roteirizado" not in df_out.columns:
+        df_out["motivo_nao_roteirizado"] = df_out["motivo_final_remanescente_m4"]
+    else:
+        df_out["motivo_nao_roteirizado"] = df_out["motivo_nao_roteirizado"].where(
+            df_out["motivo_nao_roteirizado"].astype(str).str.strip() != "",
+            df_out["motivo_final_remanescente_m4"],
+        )
 
     colunas_prioritarias = [
         "id_linha_pipeline",
@@ -1717,6 +1745,17 @@ def _montar_outputs_m4(
     df_tentativas_fechamento_bloco_4 = pd.DataFrame(ctx["tentativas_fechamento"])
 
     df_remanescente_roteirizavel_bloco_4 = _filtrar_nao_alocados(fila, ctx["ids_alocados"]).copy().reset_index(drop=True)
+    ids_bloqueados_redespacho = set(ctx.get("ids_bloqueados_redespacho", set()))
+    if len(df_remanescente_roteirizavel_bloco_4) > 0 and len(ids_bloqueados_redespacho) > 0:
+        mask_bloqueados_rd = df_remanescente_roteirizavel_bloco_4["id_linha_pipeline"].astype(str).isin(ids_bloqueados_redespacho)
+        if mask_bloqueados_rd.any():
+            df_remanescente_roteirizavel_bloco_4.loc[mask_bloqueados_rd, "tipo_operacao"] = "redespacho"
+            df_remanescente_roteirizavel_bloco_4.loc[mask_bloqueados_rd, "status_roteirizacao"] = "nao_roteirizado"
+            df_remanescente_roteirizavel_bloco_4.loc[mask_bloqueados_rd, "motivo_nao_roteirizado"] = "perfil_bloqueado_por_restricao_veiculo"
+            df_remanescente_roteirizavel_bloco_4.loc[mask_bloqueados_rd, "motivo_final_remanescente_m4"] = "perfil_bloqueado_por_restricao_veiculo"
+            df_remanescente_roteirizavel_bloco_4.loc[mask_bloqueados_rd, "origem_bloco"] = "M4"
+            df_remanescente_roteirizavel_bloco_4.loc[mask_bloqueados_rd, "origem_etapa"] = "4A_redespacho"
+            df_remanescente_roteirizavel_bloco_4.loc[mask_bloqueados_rd, "segue_para_proximo_bloco"] = False
 
     if len(df_itens_manifestos_fechados_bloco_4) > 0:
         if df_itens_manifestos_fechados_bloco_4["id_linha_pipeline"].astype(str).duplicated().any():
@@ -1736,8 +1775,10 @@ def _montar_outputs_m4(
                 )
 
     if len(df_remanescente_roteirizavel_bloco_4) > 0:
+        if "motivo_final_remanescente_m4" not in df_remanescente_roteirizavel_bloco_4.columns:
+            df_remanescente_roteirizavel_bloco_4["motivo_final_remanescente_m4"] = np.nan
         df_remanescente_roteirizavel_bloco_4["motivo_final_remanescente_m4"] = df_remanescente_roteirizavel_bloco_4.apply(
-            lambda row: _motivo_final_remanescente(
+            lambda row: row["motivo_final_remanescente_m4"] if str(row["motivo_final_remanescente_m4"]).strip() != "" else _motivo_final_remanescente(
                 id_linha=str(row["id_linha_pipeline"]),
                 cliente=str(row["destinatario"]),
                 df_tentativas=df_tentativas_fechamento_bloco_4,
