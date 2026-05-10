@@ -20,6 +20,7 @@ from app.pipeline.m5_common import (
     ocupacao_perc,
     grupo_respeita_restricao_veiculo,
     buscar_fechamento_territorial_oversized_m5,
+    detectar_limbo_entre_perfis,
     TOLERANCIA_CORREDOR_SUBREGIAO,
 )
 
@@ -1036,6 +1037,28 @@ def executar_m5_3_composicao_subregioes(
                     candidato, vehicle_row = candidato_fb, vehicle_row_fb
                 else:
                     fallback_sem_fechamento += 1
+            if candidato is None or vehicle_row is None:
+                info_limbo = detectar_limbo_entre_perfis(peso_total(pool_df), perfis_elegiveis)
+                if bool(info_limbo.get("em_limbo")):
+                    perfil_menor = safe_text(info_limbo.get("perfil_menor"))
+                    perfil_series = perfis_elegiveis["perfil"] if "perfil" in perfis_elegiveis.columns else pd.Series("", index=perfis_elegiveis.index)
+                    tipo_series = perfis_elegiveis["tipo"] if "tipo" in perfis_elegiveis.columns else pd.Series("", index=perfis_elegiveis.index)
+                    perfil_key = perfil_series.fillna("").astype(str).str.strip()
+                    tipo_key = tipo_series.fillna("").astype(str).str.strip()
+                    perfil_match = perfil_key.where(perfil_key != "", tipo_key).str.upper()
+                    veic_df = perfis_elegiveis[perfil_match == perfil_menor]
+                    if not veic_df.empty:
+                        veic_limbo = veic_df.iloc[0]
+                        ordenado = pool_df.sort_values(by=["peso_calculado", "id_linha_pipeline"], ascending=[False, True], kind="mergesort")
+                        cand = pd.DataFrame(columns=ordenado.columns)
+                        for _, row in ordenado.iterrows():
+                            tmp = pd.concat([cand, row.to_frame().T], ignore_index=True)
+                            ok_tmp, _ = _validar_fechamento(tmp, veic_limbo, suffix=suffix, corredor_ancora=_obter_corredor_ancora(tmp), tolerancia_corredor=TOLERANCIA_CORREDOR_SUBREGIAO)
+                            if ok_tmp or _validar_hard_constraints(tmp, veic_limbo)[0]:
+                                cand = tmp
+                        ok_limbo, _ = _validar_fechamento(cand, veic_limbo, suffix=suffix, corredor_ancora=_obter_corredor_ancora(cand), tolerancia_corredor=TOLERANCIA_CORREDOR_SUBREGIAO)
+                        if ok_limbo:
+                            candidato, vehicle_row = cand, veic_limbo
             if candidato is None or vehicle_row is None:
                 tentativas.append(
                     {

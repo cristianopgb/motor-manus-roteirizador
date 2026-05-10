@@ -21,6 +21,7 @@ from app.pipeline.m5_common import (
     ocupacao_perc,
     grupo_respeita_restricao_veiculo,
     buscar_fechamento_territorial_oversized_m5,
+    detectar_limbo_entre_perfis,
     TOLERANCIA_CORREDOR_MESMA_CIDADE,
 )
 
@@ -863,6 +864,32 @@ def executar_m5_2_composicao_cidades(
                     candidato, vehicle_row = candidato_fb, vehicle_row_fb
                 else:
                     fallback_sem_fechamento += 1
+            if candidato is None or vehicle_row is None:
+                info_limbo = detectar_limbo_entre_perfis(peso_total(city_df), perfis_elegiveis)
+                if bool(info_limbo.get("em_limbo")):
+                    perfil_menor = safe_text(info_limbo.get("perfil_menor"))
+                    perfil_series = perfis_elegiveis["perfil"] if "perfil" in perfis_elegiveis.columns else pd.Series("", index=perfis_elegiveis.index)
+                    tipo_series = perfis_elegiveis["tipo"] if "tipo" in perfis_elegiveis.columns else pd.Series("", index=perfis_elegiveis.index)
+                    perfil_key = perfil_series.fillna("").astype(str).str.strip()
+                    tipo_key = tipo_series.fillna("").astype(str).str.strip()
+                    perfil_match = perfil_key.where(perfil_key != "", tipo_key).str.upper()
+                    veic_limbo_df = perfis_elegiveis[perfil_match == perfil_menor]
+                    if not veic_limbo_df.empty:
+                        veic_limbo = veic_limbo_df.iloc[0]
+                        ordenado = city_df.sort_values(by=["peso_calculado", "id_linha_pipeline"], ascending=[False, True], kind="mergesort")
+                        candidato_limbo = pd.DataFrame(columns=ordenado.columns)
+                        for _, row in ordenado.iterrows():
+                            tmp = pd.concat([candidato_limbo, row.to_frame().T], ignore_index=True)
+                            ok_tmp, _ = _validar_fechamento_fallback_cidade(tmp, veic_limbo, TOLERANCIA_CORREDOR_MESMA_CIDADE)
+                            if ok_tmp or _validar_hard_constraints(tmp, veic_limbo)[0]:
+                                candidato_limbo = tmp
+                        ok_limbo, motivo_limbo = _validar_fechamento_fallback_cidade(candidato_limbo, veic_limbo, TOLERANCIA_CORREDOR_MESMA_CIDADE)
+                        if ok_limbo:
+                            tentativas.append({"cidade": cidade_key, "uf": uf_key, "tentativa_idx": None, "blocos_considerados": 0, "veiculo_tipo_tentado": safe_text(veic_limbo.get("tipo")), "veiculo_perfil_tentado": perfil_menor, "resultado": "fallback_limbo", "motivo": "split_limbo_fechado", "qtd_itens_candidato": int(len(candidato_limbo)), "qtd_paradas_candidato": qtd_paradas(candidato_limbo), "peso_total_candidato": round(peso_total(candidato_limbo), 3), "peso_kg_total_candidato": round(peso_auditoria_total(candidato_limbo), 3), "volume_total_candidato": round(volume_total(candidato_limbo), 3), "km_referencia_candidato": round(km_referencia(candidato_limbo), 2), "ocupacao_perc_candidato": round(ocupacao_perc(candidato_limbo, veic_limbo), 2)})
+                            print(f"[M5 LIMBO] etapa=5.2 grupo={cidade_key}/{uf_key} peso={peso_total(city_df):.3f} perfil_menor={perfil_menor} perfil_maior={info_limbo.get('perfil_maior')}")
+                            candidato, vehicle_row = candidato_limbo, veic_limbo
+                        elif motivo_limbo:
+                            tentativas.append({"cidade": cidade_key, "uf": uf_key, "tentativa_idx": None, "blocos_considerados": 0, "veiculo_tipo_tentado": safe_text(veic_limbo.get("tipo")), "veiculo_perfil_tentado": perfil_menor, "resultado": "rejeitado", "motivo": motivo_limbo, "qtd_itens_candidato": int(len(candidato_limbo)), "qtd_paradas_candidato": qtd_paradas(candidato_limbo), "peso_total_candidato": round(peso_total(candidato_limbo), 3), "peso_kg_total_candidato": round(peso_auditoria_total(candidato_limbo), 3), "volume_total_candidato": round(volume_total(candidato_limbo), 3), "km_referencia_candidato": round(km_referencia(candidato_limbo), 2), "ocupacao_perc_candidato": round(ocupacao_perc(candidato_limbo, veic_limbo), 2)})
             if candidato is None or vehicle_row is None:
                 tentativas.append(
                     {

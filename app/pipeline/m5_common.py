@@ -874,3 +874,42 @@ def agrupar_saldo_por_subregiao(df: pd.DataFrame) -> pd.DataFrame:
         ascending=[False, True, True],
         kind="mergesort",
     ).reset_index(drop=True)
+
+MAX_TENTATIVAS_LIMBO_GRUPO = 50
+MAX_ITENS_AJUSTE_LIMBO = 12
+
+
+def detectar_limbo_entre_perfis(peso_total: float, df_veiculos: pd.DataFrame) -> Dict[str, Any]:
+    if df_veiculos is None or df_veiculos.empty:
+        return {"em_limbo": False}
+
+    base = df_veiculos.copy()
+    if "capacidade_peso_kg" not in base.columns:
+        return {"em_limbo": False}
+
+    base["capacidade_peso_kg"] = pd.to_numeric(base["capacidade_peso_kg"], errors="coerce").fillna(0)
+    base = base[base["capacidade_peso_kg"] > 0].sort_values("capacidade_peso_kg", ascending=True, kind="mergesort").reset_index(drop=True)
+    if len(base) < 2:
+        return {"em_limbo": False}
+
+    peso_total = safe_float(peso_total, 0.0)
+    for i in range(len(base) - 1):
+        menor = base.iloc[i]
+        maior = base.iloc[i + 1]
+        ocup_max_menor = safe_float(menor.get("ocupacao_maxima_perc"), 100.0)
+        ocup_min_maior = safe_float(maior.get("ocupacao_minima_perc"), 70.0)
+
+        maximo_menor = safe_float(menor.get("capacidade_peso_kg"), 0.0) * (ocup_max_menor / 100.0)
+        minimo_maior = safe_float(maior.get("capacidade_peso_kg"), 0.0) * (ocup_min_maior / 100.0)
+
+        if peso_total > maximo_menor and peso_total < minimo_maior:
+            return {
+                "em_limbo": True,
+                "perfil_menor": safe_text(menor.get("perfil") or menor.get("tipo")),
+                "perfil_maior": safe_text(maior.get("perfil") or maior.get("tipo")),
+                "peso_total": round(peso_total, 3),
+                "maximo_menor": round(maximo_menor, 3),
+                "minimo_maior": round(minimo_maior, 3),
+                "motivo": "peso_acima_maximo_perfil_menor_e_abaixo_minimo_perfil_maior",
+            }
+    return {"em_limbo": False}
