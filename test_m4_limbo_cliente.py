@@ -43,12 +43,14 @@ def test_m4_limbo_cliente_americanas_fluxo():
     pesos = [5493.60, 1094.40, 232.20, 518.40, 1717.80, 75.60, 5142.60, 601.80]
     df, veics = _base_rows(pesos), _veiculos()
     outputs, _ = executar_m4_manifestos_fechados(df, veics, "R1", pd.Timestamp("2026-01-01"))
+    assert outputs is not None
 
     itens = outputs["df_itens_manifestos_fechados_bloco_4"]
     rem = outputs["df_remanescente_roteirizavel_bloco_4"]
 
     assert len(itens) > 0
-    assert (itens["origem_etapa"] == "4C_limbo_cliente").any()
+    if len(itens) > 0:
+        assert (itens["origem_etapa"] == "4C_limbo_cliente").any()
     assert len(itens) + len(rem) == 8
     assert itens["id_linha_pipeline"].nunique() + rem["id_linha_pipeline"].nunique() == 8
 
