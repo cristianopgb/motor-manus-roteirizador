@@ -1510,6 +1510,16 @@ def _executar_nao_dedicados(
             origem_etapa="4C_limbo_cliente",
             catalogo_idx=int(alvo.index[0]),
         )
+        manifesto_id_log = None
+        try:
+            if ctx.get("manifestos_fechados"):
+                manifesto_id_log = ctx["manifestos_fechados"][-1].get("manifesto_id")
+        except Exception:
+            manifesto_id_log = "manifesto_registrado"
+
+        if not manifesto_id_log:
+            manifesto_id_log = "manifesto_registrado"
+
         contadores_m4["qtd_manifestos_nao_exclusivos"] += 1
         contadores_m4.setdefault("qtd_manifestos_limbo_cliente_m4", 0)
         contadores_m4.setdefault("qtd_itens_limbo_cliente_m4", 0)
@@ -1518,7 +1528,7 @@ def _executar_nao_dedicados(
         contadores_m4["qtd_itens_limbo_cliente_m4"] += int(len(candidato))
         contadores_m4["peso_total_limbo_cliente_m4"] += float(_obter_base_carga_oficial(candidato))
         print(
-            f"[M4 LIMBO] subgrupo_fechado manifesto={ctx['manifesto_seq']-1} perfil={avaliacao.get('veiculo_tipo')} "
+            f"[M4 LIMBO] subgrupo_fechado manifesto={manifesto_id_log} perfil={avaliacao.get('veiculo_tipo')} "
             f"peso={_obter_base_carga_oficial(candidato):.3f} ocupacao={_num_safe(avaliacao.get('ocupacao_oficial_perc'),0.0):.2f}"
         )
         return True
