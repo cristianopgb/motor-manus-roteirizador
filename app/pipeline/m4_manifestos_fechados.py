@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from app.pipeline.m5_common import detectar_limbo_entre_perfis
 
 OCUPACAO_MINIMA_PADRAO = 0.70
 OCUPACAO_MAXIMA_PADRAO = 1.00
@@ -1435,6 +1436,93 @@ def _executar_nao_dedicados(
             idxs.append(idx)
         return ordenado.loc[idxs].copy() if len(idxs) > 0 else ordenado.head(0).copy()
 
+    def _tentar_fallback_limbo_cliente_m4(
+        df_cliente_loop: pd.DataFrame,
+        cliente_ref: str,
+        anchor_id_ref: str,
+        info_limbo: Dict[str, Any],
+    ) -> bool:
+        perfil_menor = str(info_limbo.get("perfil_menor", "")).strip().upper()
+        perfil_maior = str(info_limbo.get("perfil_maior", "")).strip().upper()
+        peso_total_antes = _obter_base_carga_oficial(df_cliente_loop)
+        print(f"[M4 LIMBO] cliente={cliente_ref} peso={peso_total_antes:.3f} perfil_menor={perfil_menor} perfil_maior={perfil_maior}")
+
+        if perfil_menor == "":
+            return False
+        veics = catalogo_veiculos.copy()
+        perfil_series = veics["perfil"] if "perfil" in veics.columns else pd.Series("", index=veics.index)
+        tipo_series = veics["tipo"] if "tipo" in veics.columns else pd.Series("", index=veics.index)
+        perfil_txt = perfil_series.fillna("").astype(str).str.strip()
+        tipo_txt = tipo_series.fillna("").astype(str).str.strip()
+        veics["_perfil_key"] = perfil_txt.where(perfil_txt != "", tipo_txt).str.upper()
+        alvo = veics[veics["_perfil_key"] == perfil_menor]
+        if alvo.empty:
+            return False
+        veic = alvo.iloc[0]
+        if not _veiculo_disponivel_no_modo_frota(veic, tipo_roteirizacao):
+            return False
+
+        col_estavel = "id_linha_pipeline" if "id_linha_pipeline" in df_cliente_loop.columns else _obter_coluna_id_documento(df_cliente_loop)
+        ordenado = df_cliente_loop.sort_values(by=["peso_calculado", col_estavel], ascending=[False, True], kind="mergesort").copy()
+        candidato = ordenado.head(0).copy()
+        for _, row in ordenado.iterrows():
+            tmp = pd.concat([candidato, row.to_frame().T], ignore_index=True)
+            av_tmp = _avaliar_combo_no_veiculo(tmp, veic=veic, ignorar_ocupacao_minima=False, ignorar_raio=False)
+            if bool(av_tmp.get("aceito")) or (
+                bool(av_tmp.get("cabe_carga_oficial"))
+                and bool(av_tmp.get("cabe_paradas"))
+                and bool(av_tmp.get("cabe_vol"))
+                and bool(av_tmp.get("cabe_km"))
+                and bool(av_tmp.get("cabe_restricao_veiculo"))
+            ):
+                candidato = tmp
+        if len(candidato) == 0:
+            return False
+        avaliacao = _avaliar_combo_no_veiculo(candidato, veic=veic, ignorar_ocupacao_minima=False, ignorar_raio=False)
+        tent = {
+            **avaliacao,
+            "etapa_fechamento": "4C_limbo_cliente",
+            "tipo_tentativa": "fallback_limbo",
+            "cliente_referencia": cliente_ref,
+            "linha_ancora": anchor_id_ref,
+            "perfil_menor": perfil_menor,
+            "perfil_maior": perfil_maior,
+            "peso_total_antes": round(peso_total_antes, 3),
+            "peso_subgrupo": round(_obter_base_carga_oficial(candidato), 3),
+            "ocupacao_subgrupo": round(_num_safe(avaliacao.get("ocupacao_oficial_perc"), default=0.0), 2),
+            "resultado_teste": "aceito" if bool(avaliacao.get("aceito")) else "rejeitado",
+        }
+        if not bool(avaliacao.get("aceito")):
+            tent["motivo_reprovacao"] = _motivo_reprovacao(avaliacao, exigir_ocupacao=True, exigir_raio=True)
+            ctx["tentativas_fechamento"].append(tent)
+            _contabilizar_tentativa(contadores_m4, tent)
+            print(f"[M4 LIMBO] saldo_final docs={len(df_cliente_loop)} peso={peso_total_antes:.3f} motivo={tent['motivo_reprovacao']}")
+            return False
+
+        ctx["tentativas_fechamento"].append(tent)
+        _contabilizar_tentativa(contadores_m4, tent)
+        _registrar_manifesto(
+            ctx=ctx,
+            catalogo_veiculos=catalogo_veiculos,
+            tipo_roteirizacao=tipo_roteirizacao,
+            df_combo=candidato,
+            avaliacao=avaliacao,
+            origem_etapa="4C_limbo_cliente",
+            catalogo_idx=int(alvo.index[0]),
+        )
+        contadores_m4["qtd_manifestos_nao_exclusivos"] += 1
+        contadores_m4.setdefault("qtd_manifestos_limbo_cliente_m4", 0)
+        contadores_m4.setdefault("qtd_itens_limbo_cliente_m4", 0)
+        contadores_m4.setdefault("peso_total_limbo_cliente_m4", 0.0)
+        contadores_m4["qtd_manifestos_limbo_cliente_m4"] += 1
+        contadores_m4["qtd_itens_limbo_cliente_m4"] += int(len(candidato))
+        contadores_m4["peso_total_limbo_cliente_m4"] += float(_obter_base_carga_oficial(candidato))
+        print(
+            f"[M4 LIMBO] subgrupo_fechado manifesto={ctx['manifesto_seq']-1} perfil={avaliacao.get('veiculo_tipo')} "
+            f"peso={_obter_base_carga_oficial(candidato):.3f} ocupacao={_num_safe(avaliacao.get('ocupacao_oficial_perc'),0.0):.2f}"
+        )
+        return True
+
     for cliente, df_cliente in grupos_validos:
         auditoria_oversized["total_clientes_avaliados_m4"] += 1
         pool_cliente = _filtrar_nao_alocados(df_cliente, ctx["ids_alocados"])
@@ -1564,6 +1652,24 @@ def _executar_nao_dedicados(
                 if not precisa_oversized:
                     break
                 continue
+            if not precisa_oversized:
+                info_limbo = detectar_limbo_entre_perfis(
+                    peso_total=_obter_base_carga_oficial(pool_loop),
+                    df_veiculos=perfis_compativeis,
+                )
+                if bool(info_limbo.get("em_limbo")):
+                    fechou_limbo = _tentar_fallback_limbo_cliente_m4(
+                        df_cliente_loop=pool_loop,
+                        cliente_ref=cliente,
+                        anchor_id_ref=anchor_id,
+                        info_limbo=info_limbo,
+                    )
+                    if fechou_limbo:
+                        fechado_cliente = True
+                        pool_loop = _filtrar_nao_alocados(pool_loop, ctx["ids_alocados"])
+                        if len(pool_loop) > 0:
+                            print(f"[M4 LIMBO] saldo_final docs={len(pool_loop)} peso={_obter_base_carga_oficial(pool_loop):.3f} motivo=split_limbo_fechado")
+                        continue
             break
         if cliente_oversized:
             print("[M4 OVERSIZED] cliente oversized identificado")
