@@ -427,6 +427,19 @@ def _validar_fechamento(
     return True, "ok", candidato_ajustado
 
 
+
+
+def _extrair_ok_motivo_validacao(resultado: Any) -> tuple[bool, Any]:
+    if isinstance(resultado, tuple):
+        ok = bool(resultado[0]) if len(resultado) > 0 else False
+        motivo = resultado[1] if len(resultado) > 1 else None
+        return ok, motivo
+    if isinstance(resultado, dict):
+        ok = bool(resultado.get("aceito") or resultado.get("ok") or resultado.get("valido"))
+        motivo = resultado.get("motivo") or resultado.get("motivo_reprovacao")
+        return ok, motivo
+    return bool(resultado), None
+
 def _score_candidato(df_itens: pd.DataFrame, vehicle_row: pd.Series) -> Tuple[float, float, int, float]:
     ocup = ocupacao_perc(df_itens, vehicle_row)
     peso = peso_total(df_itens)
@@ -1053,12 +1066,23 @@ def executar_m5_3_composicao_subregioes(
                         cand = pd.DataFrame(columns=ordenado.columns)
                         for _, row in ordenado.iterrows():
                             tmp = pd.concat([cand, row.to_frame().T], ignore_index=True)
-                            ok_tmp, _ = _validar_fechamento(tmp, veic_limbo, suffix=suffix, corredor_ancora=_obter_corredor_ancora(tmp), tolerancia_corredor=TOLERANCIA_CORREDOR_SUBREGIAO)
-                            if ok_tmp or _validar_hard_constraints(tmp, veic_limbo)[0]:
+                            res_tmp = _validar_fechamento(tmp, veic_limbo, suffix=suffix, corredor_ancora=_obter_corredor_ancora(tmp), tolerancia_corredor=TOLERANCIA_CORREDOR_SUBREGIAO)
+                            ok_tmp, _ = _extrair_ok_motivo_validacao(res_tmp)
+                            ok_hard_tmp = _validar_hard_constraints(
+                                df_itens=tmp,
+                                vehicle_row=veic_limbo,
+                                suffix=suffix,
+                                corredor_ancora=_obter_corredor_ancora(tmp),
+                                tolerancia_corredor=TOLERANCIA_CORREDOR_SUBREGIAO,
+                            )[0]
+                            if ok_tmp or ok_hard_tmp:
                                 cand = tmp
-                        ok_limbo, _ = _validar_fechamento(cand, veic_limbo, suffix=suffix, corredor_ancora=_obter_corredor_ancora(cand), tolerancia_corredor=TOLERANCIA_CORREDOR_SUBREGIAO)
+                        res_limbo = _validar_fechamento(cand, veic_limbo, suffix=suffix, corredor_ancora=_obter_corredor_ancora(cand), tolerancia_corredor=TOLERANCIA_CORREDOR_SUBREGIAO)
+                        ok_limbo, motivo_limbo = _extrair_ok_motivo_validacao(res_limbo)
                         if ok_limbo:
                             candidato, vehicle_row = cand, veic_limbo
+                        elif motivo_limbo:
+                            tentativas.append(_tentativa_dict(subregiao_key, veic_limbo, "rejeitado", safe_text(motivo_limbo), cand, None, len(cand), corredor_ancora=_obter_corredor_ancora(cand)))
             if candidato is None or vehicle_row is None:
                 tentativas.append(
                     {
