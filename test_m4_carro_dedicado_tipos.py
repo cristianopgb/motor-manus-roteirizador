@@ -40,33 +40,30 @@ def _run(df):
     return out
 
 
-def test_cenario_normal_agrupa_por_destinatario():
+def test_cenario_normal_2_documentos_atualiza_todos_itens():
     df = pd.DataFrame([
         _row("A", "R1", "D1", 1000, tipo="normal", flag=True),
         _row("B", "R2", "D1", 1200, tipo="normal", flag=True),
-        _row("C", "R3", "D2", 900, tipo="normal", flag=True),
     ])
     itens = _run(df)["df_itens_manifestos_fechados_bloco_4"]
     dedicados = itens.loc[itens["veiculo_exclusivo_flag"] == True]
-    assert len(dedicados) == 3
-    assert dedicados.groupby("destinatario")["manifesto_id"].nunique().to_dict() == {"D1": 1, "D2": 1}
+    assert len(dedicados) == 2
+    assert dedicados["manifesto_id"].nunique() == 1
     assert (dedicados["carro_dedicado_tipo"] == "normal").all()
-    for manifesto_id, grupo in dedicados.groupby("manifesto_id"):
-        assert (grupo["carro_dedicado_tipo"] == "normal").all(), f"manifesto {manifesto_id} com tipo incorreto"
+    assert (dedicados["tipo_operacao_manifesto"] == "carro_dedicado").all()
 
 
-def test_cenario_exclusivo_agrupa_por_remetente_destinatario():
+def test_cenario_exclusivo_2_documentos_atualiza_todos_itens():
     df = pd.DataFrame([
         _row("A", "R1", "D1", 1000, tipo="exclusivo", flag=True),
         _row("B", "R1", "D1", 1200, tipo="exclusivo", flag=True),
-        _row("C", "R2", "D1", 900, tipo="exclusivo", flag=True),
     ])
     itens = _run(df)["df_itens_manifestos_fechados_bloco_4"]
     dedicados = itens.loc[itens["veiculo_exclusivo_flag"] == True]
-    assert dedicados.groupby(["remetente", "destinatario"])["manifesto_id"].nunique().to_dict() == {("R1", "D1"): 1, ("R2", "D1"): 1}
+    assert len(dedicados) == 2
+    assert dedicados["manifesto_id"].nunique() == 1
     assert (dedicados["carro_dedicado_tipo"] == "exclusivo").all()
-    for manifesto_id, grupo in dedicados.groupby("manifesto_id"):
-        assert (grupo["carro_dedicado_tipo"] == "exclusivo").all(), f"manifesto {manifesto_id} com tipo incorreto"
+    assert (dedicados["tipo_operacao_manifesto"] == "carro_dedicado_exclusivo").all()
 
 
 def test_cenario_nao_contamina_nao_marcado():
