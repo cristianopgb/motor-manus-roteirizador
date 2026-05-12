@@ -672,6 +672,7 @@ def _garantir_colunas_carteira_v2(carteira: pd.DataFrame) -> pd.DataFrame:
 
     carteira = _coalescer_colunas(carteira, "restricao_veiculo", ["restricao_veiculo", "restricao_veic"])
     carteira = _coalescer_colunas(carteira, "carro_dedicado", ["carro_dedicado", "veiculo_exclusivo"])
+    carteira = _coalescer_colunas(carteira, "carro_dedicado_tipo", ["carro_dedicado_tipo", "tipo_carro_dedicado"])
     carteira = _coalescer_colunas(carteira, "inicio_ent", ["inicio_ent"])
     carteira = _coalescer_colunas(carteira, "fim_en", ["fim_en", "fim_ent", "fim_ent_1"])
     carteira = _coalescer_colunas(carteira, "redespacho_flag", ["redespacho_flag"])
@@ -723,6 +724,20 @@ def _coerce_float_or_nan(valor: Any) -> float:
     if normalizado is None:
         return np.nan
     return float(normalizado)
+
+
+def _normalizar_tipo_carro_dedicado(valor: Any) -> Optional[str]:
+    if _is_empty_value(valor):
+        return None
+    txt = remover_acentos(str(valor)).strip().lower()
+    txt = re.sub(r"\s+", " ", txt)
+    if txt in {"carro dedicado exclusivo", "dedicado exclusivo", "exclusivo"}:
+        return "exclusivo"
+    if txt in {"carro dedicado", "dedicado", "normal", "sim", "s", "true", "1"}:
+        return "normal"
+    if txt in {"", "-", "—", "null", "nan", "undefined", "false", "0", "nao", "n"}:
+        return None
+    return None
 
 
 def executar_m1_padronizacao(
@@ -800,6 +815,7 @@ def executar_m1_padronizacao(
         "prioridade": "prioridade_embarque",
         "restricao_veiculo": "restricao_veiculo",
         "carro_dedicado": "veiculo_exclusivo",
+        "carro_dedicado_tipo": "carro_dedicado_tipo",
         "inicio_ent": "inicio_entrega",
         "fim_en": "fim_entrega",
         "redespacho_flag": "redespacho_flag",
@@ -977,6 +993,15 @@ def executar_m1_padronizacao(
         carteira["veiculo_exclusivo_flag"] = converter_flag_sim_nao(carteira["veiculo_exclusivo"])
     else:
         carteira["veiculo_exclusivo_flag"] = False
+
+    if "carro_dedicado_tipo" in carteira.columns:
+        carteira["carro_dedicado_tipo"] = carteira["carro_dedicado_tipo"].apply(_normalizar_tipo_carro_dedicado)
+    else:
+        carteira["carro_dedicado_tipo"] = None
+
+    mascara_compativel = carteira["carro_dedicado_tipo"].isna() & carteira["veiculo_exclusivo_flag"].astype(bool)
+    carteira.loc[mascara_compativel, "carro_dedicado_tipo"] = "normal"
+    carteira["veiculo_exclusivo_flag"] = carteira["carro_dedicado_tipo"].isin(["normal", "exclusivo"])
 
     carteira["redespacho_codigo"] = carteira.get(
         "redespacho_codigo",

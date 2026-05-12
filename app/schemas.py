@@ -211,6 +211,14 @@ class CarteiraItem(BaseModel):
             "Veículo Exclusivo",
         ),
     )
+    carro_dedicado_tipo: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "carro_dedicado_tipo",
+            "tipo_carro_dedicado",
+            "Tipo Carro Dedicado",
+        ),
+    )
     Inicio_Ent: Optional[Any] = Field(
         default=None,
         validation_alias=AliasChoices("Inicio Ent.", "Início Ent."),
