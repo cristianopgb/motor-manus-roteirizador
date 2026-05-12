@@ -1335,6 +1335,9 @@ def _executar_dedicados(
             _contabilizar_tentativa(contadores_m4, tent)
 
             if avaliacao["aceito"]:
+                inicio_itens = len(ctx.get("itens_manifestos_fechados", []))
+                inicio_manifestos = len(ctx.get("manifestos_fechados", []))
+
                 _registrar_manifesto(
                     ctx=ctx,
                     catalogo_veiculos=catalogo_veiculos,
@@ -1350,20 +1353,18 @@ def _executar_dedicados(
                 origem_dedicado = (
                     "4B_carro_dedicado_exclusivo" if tipo_dedicado == "exclusivo" else "4B_carro_dedicado_normal"
                 )
-                manifesto_id_registrado = None
-                if ctx.get("manifestos_fechados"):
-                    manifesto_id_registrado = ctx["manifestos_fechados"][-1].get("manifesto_id")
 
-                for item in ctx.get("itens_manifestos_fechados", []):
-                    if item.get("manifesto_id") == manifesto_id_registrado:
-                        item["carro_dedicado_tipo"] = tipo_dedicado
-                        item["tipo_operacao_manifesto"] = tipo_operacao_manifesto
-                        item["origem_etapa"] = origem_dedicado
+                itens_fechados = ctx.get("itens_manifestos_fechados", [])
+                for idx_item in range(inicio_itens, len(itens_fechados)):
+                    itens_fechados[idx_item]["carro_dedicado_tipo"] = tipo_dedicado
+                    itens_fechados[idx_item]["tipo_operacao_manifesto"] = tipo_operacao_manifesto
+                    itens_fechados[idx_item]["origem_etapa"] = origem_dedicado
 
-                if ctx.get("manifestos_fechados"):
-                    manifesto = ctx["manifestos_fechados"][-1]
-                    manifesto["carro_dedicado_tipo"] = tipo_dedicado
-                    manifesto["tipo_operacao_manifesto"] = tipo_operacao_manifesto
+                manifestos = ctx.get("manifestos_fechados", [])
+                for idx_manifesto in range(inicio_manifestos, len(manifestos)):
+                    manifestos[idx_manifesto]["carro_dedicado_tipo"] = tipo_dedicado
+                    manifestos[idx_manifesto]["tipo_operacao_manifesto"] = tipo_operacao_manifesto
+                    manifestos[idx_manifesto]["origem_etapa"] = origem_dedicado
                 docs = len(pool_cliente)
                 peso = float(_obter_base_carga_oficial(pool_cliente))
                 if tipo_dedicado == "normal":
