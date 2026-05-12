@@ -275,6 +275,25 @@ def _eh_exclusivo(row: pd.Series) -> bool:
     return _bool_safe(row.get("veiculo_exclusivo"))
 
 
+def _normalizar_tipo_carro_dedicado(valor: Any) -> Optional[str]:
+    if valor is None:
+        return None
+    try:
+        if pd.isna(valor):
+            return None
+    except Exception:
+        pass
+    txt = str(valor).strip().lower()
+    txt = unicodedata.normalize("NFKD", txt)
+    txt = "".join(c for c in txt if not unicodedata.combining(c))
+    txt = re.sub(r"\s+", " ", txt)
+    if txt in {"carro dedicado exclusivo", "dedicado exclusivo", "exclusivo"}:
+        return "exclusivo"
+    if txt in {"carro dedicado", "dedicado", "normal", "sim", "s", "true", "1"}:
+        return "normal"
+    return None
+
+
 def _cliente_key(row: pd.Series) -> str:
     return _normalizar_str(row.get("destinatario"))
 
@@ -1087,6 +1106,12 @@ def _preparar_input_m4(
         ["flag_veiculo_exclusivo", "veiculo_exclusivo_bool"],
         default=False,
     )
+    fila = _garantir_coluna_por_alias(
+        fila,
+        "carro_dedicado_tipo",
+        ["tipo_carro_dedicado", "Tipo Carro Dedicado"],
+        default=np.nan,
+    )
     fila = _garantir_coluna_por_alias(fila, "restricao_veiculo", ["Restrição Veículo", "restricao_veiculo"], default=np.nan)
     fila = _garantir_coluna_por_alias(fila, "prioridade_embarque", ["Prioridade", "prioridade"], default=np.nan)
     fila = _garantir_coluna_por_alias(fila, "distancia_rodoviaria_est_km", ["km_referencia", "distancia_km", "km_rota_referencia"], default=np.nan)
@@ -1170,6 +1195,10 @@ def _preparar_input_m4(
             fila[col] = pd.to_datetime(fila[col], errors="coerce")
 
     fila["veiculo_exclusivo_flag"] = fila.apply(_eh_exclusivo, axis=1)
+    fila["carro_dedicado_tipo"] = fila["carro_dedicado_tipo"].apply(_normalizar_tipo_carro_dedicado)
+    mascara_compat = fila["carro_dedicado_tipo"].isna() & fila["veiculo_exclusivo_flag"].astype(bool)
+    fila.loc[mascara_compat, "carro_dedicado_tipo"] = "normal"
+    fila["veiculo_exclusivo_flag"] = fila["veiculo_exclusivo_flag"].astype(bool) | fila["carro_dedicado_tipo"].isin(["normal", "exclusivo"])
 
     if fila["cte"].isna().all():
         fila["cte"] = fila["id_linha_pipeline"].astype(str)
@@ -1230,19 +1259,24 @@ def _executar_dedicados(
     tipo_roteirizacao: str,
     contadores_m4: Dict[str, Any],
 ) -> None:
-    grupos_dedicados: List[Tuple[str, pd.DataFrame]] = []
+    base = [dfc for _, dfc in grupos_cliente if len(dfc) > 0]
+    if len(base) == 0:
+        return
+    df_todos = pd.concat(base, ignore_index=True)
+    mascara_dedicado = df_todos["veiculo_exclusivo_flag"].astype(bool) | df_todos["carro_dedicado_tipo"].isin(["normal", "exclusivo"])
+    df_dedicado = df_todos.loc[mascara_dedicado].copy().reset_index(drop=True)
+    df_normal = df_dedicado.loc[df_dedicado["carro_dedicado_tipo"].fillna("normal").eq("normal")].copy().reset_index(drop=True)
+    df_exclusivo = df_dedicado.loc[df_dedicado["carro_dedicado_tipo"].eq("exclusivo")].copy().reset_index(drop=True)
+    print(f"[M4 DEDICADO] total_linhas_dedicado_normal={len(df_normal)}")
+    print(f"[M4 DEDICADO] total_linhas_dedicado_exclusivo={len(df_exclusivo)}")
 
-    for cliente, dfc in grupos_cliente:
-        flags_exclusivos = dfc["veiculo_exclusivo_flag"].apply(_bool_safe)
-        df_exclusivos = dfc.loc[flags_exclusivos].copy().reset_index(drop=True)
-
-        # REGRA VALIDADA:
-        # - Somente as linhas marcadas como veículo dedicado entram neste bloco.
-        # - Linhas do mesmo cliente sem marcação NÃO são puxadas para o manifesto dedicado.
-        # - Todas as linhas dedicadas do mesmo cliente devem ser consolidadas em um único combo.
-        # - A ocupação mínima é ignorada para dedicado; capacidade, volume, paradas e restrição seguem válidos.
-        if len(df_exclusivos) > 0:
-            grupos_dedicados.append((cliente, df_exclusivos))
+    grupos_dedicados: List[Tuple[str, str, pd.DataFrame]] = []
+    for destinatario, grupo in df_normal.groupby("destinatario", dropna=False):
+        grupos_dedicados.append(("normal", f"{destinatario}", grupo.copy().reset_index(drop=True)))
+    for (remetente, destinatario), grupo in df_exclusivo.groupby(["remetente", "destinatario"], dropna=False):
+        grupos_dedicados.append(("exclusivo", f"{remetente}|{destinatario}", grupo.copy().reset_index(drop=True)))
+    print(f"[M4 DEDICADO] grupos_normal_por_destinatario={len(df_normal.groupby('destinatario', dropna=False)) if len(df_normal) else 0}")
+    print(f"[M4 DEDICADO] grupos_exclusivo_por_remetente_destinatario={len(df_exclusivo.groupby(['remetente','destinatario'], dropna=False)) if len(df_exclusivo) else 0}")
 
     contadores_m4["qtd_clientes_exclusivos"] = int(len(grupos_dedicados))
 
@@ -1251,7 +1285,7 @@ def _executar_dedicados(
         ascending=[True, True, True, True],
     )
 
-    for cliente, df_cliente_exclusivo in grupos_dedicados:
+    for tipo_dedicado, cliente, df_cliente_exclusivo in grupos_dedicados:
         pool_cliente = _filtrar_nao_alocados(df_cliente_exclusivo, ctx["ids_alocados"])
         if len(pool_cliente) == 0:
             continue
@@ -1310,6 +1344,35 @@ def _executar_dedicados(
                     origem_etapa="4B1_dedicados",
                     catalogo_idx=idx,
                 )
+                tipo_operacao_manifesto = (
+                    "carro_dedicado_exclusivo" if tipo_dedicado == "exclusivo" else "carro_dedicado"
+                )
+                origem_dedicado = (
+                    "4B_carro_dedicado_exclusivo" if tipo_dedicado == "exclusivo" else "4B_carro_dedicado_normal"
+                )
+                manifesto_id_registrado = None
+                if ctx.get("manifestos_fechados"):
+                    manifesto_id_registrado = ctx["manifestos_fechados"][-1].get("manifesto_id")
+
+                for item in ctx.get("itens_manifestos_fechados", []):
+                    if item.get("manifesto_id") == manifesto_id_registrado:
+                        item["carro_dedicado_tipo"] = tipo_dedicado
+                        item["tipo_operacao_manifesto"] = tipo_operacao_manifesto
+                        item["origem_etapa"] = origem_dedicado
+
+                if ctx.get("manifestos_fechados"):
+                    manifesto = ctx["manifestos_fechados"][-1]
+                    manifesto["carro_dedicado_tipo"] = tipo_dedicado
+                    manifesto["tipo_operacao_manifesto"] = tipo_operacao_manifesto
+                docs = len(pool_cliente)
+                peso = float(_obter_base_carga_oficial(pool_cliente))
+                if tipo_dedicado == "normal":
+                    destinatario = str(pool_cliente["destinatario"].iloc[0])
+                    print(f"[M4 DEDICADO] fechado tipo=normal destinatario={destinatario} docs={docs} peso={peso}")
+                else:
+                    destinatario = str(pool_cliente["destinatario"].iloc[0])
+                    remetente = str(pool_cliente["remetente"].iloc[0]) if "remetente" in pool_cliente.columns else ""
+                    print(f"[M4 DEDICADO] fechado tipo=exclusivo remetente={remetente} destinatario={destinatario} docs={docs} peso={peso}")
                 contadores_m4["qtd_manifestos_exclusivos"] += 1
                 fechado = True
                 break
