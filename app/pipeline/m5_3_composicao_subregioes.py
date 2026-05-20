@@ -4,6 +4,7 @@ from itertools import combinations
 from math import atan2, cos, radians, sin, sqrt
 from typing import Any, Dict, List, Optional, Tuple
 import time
+import os
 
 import pandas as pd
 
@@ -30,6 +31,9 @@ MAX_PREFIXOS_POR_PERFIL = 8
 MAX_TROCAS_1 = 20
 MAX_TROCAS_2 = 30
 FATOR_KM_RODOVIARIO_PADRAO_M5_3 = 1.20
+M5_DETERMINISTICO_CORREDOR_ATIVO = os.getenv("M5_DETERMINISTICO_CORREDOR_ATIVO", "true").strip().lower() in {"1", "true", "t", "yes", "y", "sim", "s"}
+M5_MAX_JANELAS_PREFILTRO_SUB = int(os.getenv("M5_MAX_JANELAS_PREFILTRO_SUB", "20"))
+M5_MAX_SEGUNDOS_PREFILTRO_SUB = float(os.getenv("M5_MAX_SEGUNDOS_PREFILTRO_SUB", "1.5"))
 
 COLS_PREMANIFESTOS_M5_3 = [
     "manifesto_id", "tipo_manifesto", "subregiao", "veiculo_tipo", "veiculo_perfil", "qtd_itens",
@@ -38,6 +42,8 @@ COLS_PREMANIFESTOS_M5_3 = [
     "max_entregas_veiculo", "max_km_distancia_veiculo", "ocupacao_minima_perc_veiculo",
     "ocupacao_maxima_perc_veiculo", "ignorar_ocupacao_minima", "origem_modulo", "origem_etapa",
     "km_total_estimado_m5_3", "corredor_ancora_m5_3", "diff_corredor_max_m5_3",
+    "origem_fechamento", "agrupamento_base", "corredor_base", "corredores_usados", "peso_inicial",
+    "peso_final", "ocupacao_final", "veiculo_escolhido", "motivo_rejeicao", "tipo_ajuste",
 ]
 
 COLS_TENTATIVAS_M5_3 = [
@@ -551,6 +557,16 @@ def _build_manifesto(
         "ignorar_ocupacao_minima": False,
         "origem_modulo": 5,
         "origem_etapa": "m5_3_composicao_subregiao",
+        "origem_fechamento": safe_text(df_itens.attrs.get("origem_fechamento", "solver_atual")),
+        "agrupamento_base": safe_text(df_itens.attrs.get("agrupamento_base", "subregiao_corredor")),
+        "corredor_base": safe_text(df_itens.attrs.get("corredor_base", "")),
+        "corredores_usados": safe_text(df_itens.attrs.get("corredores_usados", "")),
+        "peso_inicial": round(safe_float(df_itens.attrs.get("peso_inicial", peso_total(df_itens_limpo))), 3),
+        "peso_final": round(peso_total(df_itens_limpo), 3),
+        "ocupacao_final": round(ocupacao_perc(df_itens_limpo, vehicle_row), 2),
+        "veiculo_escolhido": safe_text(vehicle_row.get("perfil")) or safe_text(vehicle_row.get("tipo")),
+        "motivo_rejeicao": safe_text(df_itens.attrs.get("motivo_rejeicao", "")),
+        "tipo_ajuste": safe_text(df_itens.attrs.get("tipo_ajuste", "mesmo_corredor")),
     }
 
     df_manifesto = pd.DataFrame([manifesto])
@@ -560,6 +576,19 @@ def _build_manifesto(
         df_itens_saida[k] = v
 
     return df_manifesto, df_itens_saida
+
+
+def _min_peso_menor_veiculo(perfis_df: pd.DataFrame) -> float:
+    if perfis_df is None or perfis_df.empty:
+        return 0.0
+    base = perfis_df.copy()
+    base["capacidade_peso_kg"] = pd.to_numeric(base.get("capacidade_peso_kg"), errors="coerce").fillna(0.0)
+    base["ocupacao_minima_perc"] = pd.to_numeric(base.get("ocupacao_minima_perc"), errors="coerce").fillna(70.0)
+    base = base[base["capacidade_peso_kg"] > 0].sort_values(by=["capacidade_peso_kg"], ascending=[True], kind="mergesort")
+    if base.empty:
+        return 0.0
+    row = base.iloc[0]
+    return safe_float(row["capacidade_peso_kg"]) * (safe_float(row["ocupacao_minima_perc"]) / 100.0)
 
 
 def _get_eligible_vehicles_for_subregiao(
@@ -1020,13 +1049,48 @@ def executar_m5_3_composicao_subregioes(
                     blocos_snapshot["cidade"] = None
                 blocos_cliente_list.append(_drop_internal_cols(blocos_snapshot, suffix=suffix))
 
-            candidato, vehicle_row, motivo, chamadas_prioritarias, fechamentos_agendada = _buscar_melhor_fechamento_na_subregiao(
-                pool_df=pool_df,
-                perfis_elegiveis_df=perfis_elegiveis,
-                subregiao=subregiao_key,
-                tentativas=tentativas,
-                suffix=suffix,
-            )
+            chamadas_prioritarias, fechamentos_agendada = 0, 0
+            candidato, vehicle_row, motivo = None, None, "deterministico_desativado"
+            if M5_DETERMINISTICO_CORREDOR_ATIVO:
+                perfis_sub = _get_eligible_vehicles_for_subregiao(subregiao_key, perfis_elegiveis)
+                min_seed = _min_peso_menor_veiculo(perfis_sub)
+                pool_tmp = pool_df.copy()
+                pool_tmp["_corr"] = pd.to_numeric(pool_tmp.get("corredor_30g_idx"), errors="coerce").fillna(0).astype(int)
+                t0_pref_sub = time.perf_counter()
+                janelas_testadas_sub = 0
+                for corr_idx, pool_corr in pool_tmp.groupby("_corr", sort=True):
+                    if janelas_testadas_sub >= M5_MAX_JANELAS_PREFILTRO_SUB or (time.perf_counter() - t0_pref_sub) >= M5_MAX_SEGUNDOS_PREFILTRO_SUB:
+                        motivo = "prefiltro_limite_sub"
+                        break
+                    if int(corr_idx) < 1 or int(corr_idx) > 12:
+                        continue
+                    if peso_total(pool_corr) < min_seed:
+                        continue
+                    janelas_testadas_sub += 1
+                    cand_pre, veh_pre, motivo_pre, cp, fa = _buscar_melhor_fechamento_na_subregiao(
+                        pool_df=pool_corr.copy(),
+                        perfis_elegiveis_df=perfis_elegiveis,
+                        subregiao=subregiao_key,
+                        tentativas=tentativas,
+                        suffix=suffix,
+                    )
+                    chamadas_prioritarias += int(cp)
+                    fechamentos_agendada += int(fa)
+                    if cand_pre is not None and veh_pre is not None:
+                        cand_pre.attrs["origem_fechamento"] = "pre_filtro_corredor"
+                        cand_pre.attrs["agrupamento_base"] = "subregiao_corredor_30g_idx"
+                        cand_pre.attrs["corredor_base"] = f"C{int(corr_idx):02d}"
+                        cand_pre.attrs["corredores_usados"] = f"C{int(corr_idx):02d}"
+                        candidato, vehicle_row, motivo = cand_pre, veh_pre, motivo_pre
+                        break
+            if candidato is None or vehicle_row is None:
+                candidato, vehicle_row, motivo, chamadas_prioritarias, fechamentos_agendada = _buscar_melhor_fechamento_na_subregiao(
+                    pool_df=pool_df,
+                    perfis_elegiveis_df=perfis_elegiveis,
+                    subregiao=subregiao_key,
+                    tentativas=tentativas,
+                    suffix=suffix,
+                )
             chamadas_prioritarias_total += int(chamadas_prioritarias)
             fechamentos_agendada_total += int(fechamentos_agendada)
             if candidato is None or vehicle_row is None:
@@ -1048,6 +1112,7 @@ def executar_m5_3_composicao_subregioes(
                 if candidato_fb is not None and vehicle_row_fb is not None:
                     fallback_fechado += 1
                     candidato, vehicle_row = candidato_fb, vehicle_row_fb
+                    candidato.attrs["origem_fechamento"] = "solver_atual"
                 else:
                     fallback_sem_fechamento += 1
             if candidato is None or vehicle_row is None:
