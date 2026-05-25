@@ -792,6 +792,7 @@ def _buscar_melhor_fechamento_na_mesorregiao(
     mesorregiao: str,
     tentativas: List[Dict[str, Any]],
     suffix: str,
+    tolerancia_corredor: int = TOLERANCIA_CORREDOR_MESORREGIAO,
 ) -> Tuple[Optional[pd.DataFrame], Optional[pd.Series], str, int, int]:
     if pool_df.empty:
         return None, None, "mesorregiao_vazia", 0, 0
@@ -882,6 +883,7 @@ def _buscar_melhor_fechamento_na_mesorregiao(
                 df_itens=candidato_bruto,
                 vehicle_row=vehicle_row,
                 suffix=suffix,
+                tolerancia_corredor=tolerancia_corredor,
             )
 
             tentativas.append(
@@ -931,6 +933,15 @@ def executar_m5_4b_composicao_mesorregioes(
     caminhos_pipeline: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ) -> Tuple[Dict[str, pd.DataFrame], Dict[str, Any]]:
+    modo_corredor = safe_text(kwargs.get("modo_corredor", "padrao")).lower() or "padrao"
+    if modo_corredor not in {"padrao", "desligado", "ampliado"}:
+        modo_corredor = "padrao"
+    amplitude_corredor = max(0, safe_int(kwargs.get("amplitude_corredor"), TOLERANCIA_CORREDOR_MESORREGIAO))
+    tolerancia_corredor_exec = (
+        99 if modo_corredor == "desligado"
+        else amplitude_corredor if modo_corredor == "ampliado"
+        else TOLERANCIA_CORREDOR_MESORREGIAO
+    )
     del rodada_id, kwargs
 
     suffix = "m5_4b"
@@ -1054,7 +1065,7 @@ def executar_m5_4b_composicao_mesorregioes(
 
             chamadas_prioritarias, fechamentos_agendada = 0, 0
             candidato, vehicle_row, motivo = None, None, "deterministico_desativado"
-            if M5_DETERMINISTICO_CORREDOR_ATIVO:
+            if M5_DETERMINISTICO_CORREDOR_ATIVO and modo_corredor != "desligado":
                 perfis_meso = _get_eligible_vehicles_for_mesorregiao(mesorregiao_key, perfis_elegiveis)
                 min_seed = _min_peso_menor_veiculo(perfis_meso)
                 pool_tmp = pool_df.copy()
@@ -1068,13 +1079,16 @@ def executar_m5_4b_composicao_mesorregioes(
                     if int(corr_idx) < 1 or int(corr_idx) > 12:
                         continue
                     viz1 = int(corr_idx)
-                    asc1 = ((viz1) % 12) + 1
-                    desc1 = ((viz1 - 2) % 12) + 1
-                    janelas = [[viz1], [viz1, asc1], [viz1, desc1]]
-                    if TOLERANCIA_CORREDOR_MESORREGIAO >= 2:
-                        asc2 = ((viz1 + 1) % 12) + 1
-                        desc2 = ((viz1 - 3) % 12) + 1
-                        janelas.extend([[viz1, asc1, desc1], [viz1, asc2], [viz1, desc2], [viz1, asc1, desc1, asc2, desc2]])
+                    if modo_corredor == "ampliado":
+                        janelas = [[((viz1 - 1 + delta) % 12) + 1 for delta in range(-int(tolerancia_corredor_exec), int(tolerancia_corredor_exec) + 1)]]
+                    else:
+                        asc1 = ((viz1) % 12) + 1
+                        desc1 = ((viz1 - 2) % 12) + 1
+                        janelas = [[viz1], [viz1, asc1], [viz1, desc1]]
+                        if TOLERANCIA_CORREDOR_MESORREGIAO >= 2:
+                            asc2 = ((viz1 + 1) % 12) + 1
+                            desc2 = ((viz1 - 3) % 12) + 1
+                            janelas.extend([[viz1, asc1, desc1], [viz1, asc2], [viz1, desc2], [viz1, asc1, desc1, asc2, desc2]])
                     for janela in janelas:
                         pool_janela = pool_tmp[pool_tmp["_corr"].isin(janela)].copy()
                         if peso_total(pool_janela) < min_seed:
@@ -1086,6 +1100,7 @@ def executar_m5_4b_composicao_mesorregioes(
                             mesorregiao=mesorregiao_key,
                             tentativas=tentativas,
                             suffix=suffix,
+                            tolerancia_corredor=tolerancia_corredor_exec,
                         )
                         chamadas_prioritarias += int(cp)
                         fechamentos_agendada += int(fa)
@@ -1105,6 +1120,7 @@ def executar_m5_4b_composicao_mesorregioes(
                     mesorregiao=mesorregiao_key,
                     tentativas=tentativas,
                     suffix=suffix,
+                    tolerancia_corredor=tolerancia_corredor_exec,
                 )
             chamadas_prioritarias_total += int(chamadas_prioritarias)
             fechamentos_agendada_total += int(fechamentos_agendada)
@@ -1118,7 +1134,7 @@ def executar_m5_4b_composicao_mesorregioes(
                     validar_fechamento_fn=lambda df_itens, vehicle_row, suffix, tolerancia_corredor, **kwargs: _validar_fechamento(
                         df_itens=df_itens, vehicle_row=vehicle_row, suffix=suffix, tolerancia_corredor=tolerancia_corredor
                     ),
-                    tolerancia_corredor=TOLERANCIA_CORREDOR_MESORREGIAO,
+                    tolerancia_corredor=tolerancia_corredor_exec,
                 )
                 if candidato_fb is not None and vehicle_row_fb is not None:
                     fallback_fechado += 1
@@ -1142,7 +1158,7 @@ def executar_m5_4b_composicao_mesorregioes(
                         cand = pd.DataFrame(columns=ordenado.columns)
                         for _, row in ordenado.iterrows():
                             tmp = pd.concat([cand, row.to_frame().T], ignore_index=True)
-                            res_tmp = _validar_fechamento(tmp, veic_limbo, suffix=suffix, tolerancia_corredor=TOLERANCIA_CORREDOR_MESORREGIAO)
+                            res_tmp = _validar_fechamento(tmp, veic_limbo, suffix=suffix, tolerancia_corredor=tolerancia_corredor_exec)
                             ok_tmp, _ = _extrair_ok_motivo_validacao(res_tmp)
                             ok_hard_tmp = _validar_hard_constraints(
                                 df_itens=tmp,
@@ -1151,7 +1167,7 @@ def executar_m5_4b_composicao_mesorregioes(
                             )[0]
                             if ok_tmp or ok_hard_tmp:
                                 cand = tmp
-                        res_limbo = _validar_fechamento(cand, veic_limbo, suffix=suffix, tolerancia_corredor=TOLERANCIA_CORREDOR_MESORREGIAO)
+                        res_limbo = _validar_fechamento(cand, veic_limbo, suffix=suffix, tolerancia_corredor=tolerancia_corredor_exec)
                         ok_limbo, motivo_limbo = _extrair_ok_motivo_validacao(res_limbo)
                         if ok_limbo:
                             candidato, vehicle_row = cand, veic_limbo

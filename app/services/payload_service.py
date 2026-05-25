@@ -121,6 +121,11 @@ def _normalizar_parametros(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     parametros.setdefault("fator_km_rodoviario", 1.25)
     parametros.setdefault("km_dia_max", parametros.get("km_dia_operacional", 400))
 
+    # Controles de UI (fallback seguro para regras atuais)
+    parametros.setdefault("folga_entrega_dias", None)
+    parametros.setdefault("modo_corredor", "padrao")
+    parametros.setdefault("amplitude_corredor", None)
+
     # ============================================================
     # NOVO DATASET V2 - SINALIZAÇÃO DE CONTRATO
     # ============================================================

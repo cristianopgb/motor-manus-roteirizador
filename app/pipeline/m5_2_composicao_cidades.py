@@ -705,6 +705,17 @@ def executar_m5_2_composicao_cidades(
     caminhos_pipeline: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ) -> Tuple[Dict[str, pd.DataFrame], Dict[str, Any]]:
+    modo_corredor = safe_text(kwargs.get("modo_corredor", "padrao")).lower() or "padrao"
+    if modo_corredor not in {"padrao", "desligado", "ampliado"}:
+        modo_corredor = "padrao"
+    amplitude_corredor = kwargs.get("amplitude_corredor", None)
+    tolerancia_corredor = safe_int(
+        amplitude_corredor if amplitude_corredor is not None else kwargs.get("tolerancia_corredor", TOLERANCIA_CORREDOR_MESMA_CIDADE),
+        TOLERANCIA_CORREDOR_MESMA_CIDADE,
+    )
+    usar_regra_corredor = modo_corredor != "desligado"
+    if modo_corredor == "desligado":
+        tolerancia_corredor = 999
     del rodada_id, kwargs
 
     suffix = "m5_2"
@@ -829,12 +840,12 @@ def executar_m5_2_composicao_cidades(
                     validar_fechamento_fn=lambda df_itens, vehicle_row, tolerancia_corredor, **kwargs: _validar_fechamento_fallback_cidade(
                         df_itens=df_itens, vehicle_row=vehicle_row, tolerancia_corredor=tolerancia_corredor
                     ),
-                    tolerancia_corredor=TOLERANCIA_CORREDOR_MESMA_CIDADE,
+                    tolerancia_corredor=(int(tolerancia_corredor) if bool(usar_regra_corredor) else 999),
                 )
                 if candidato_fb is not None and vehicle_row_fb is not None:
                     fallback_fechado += 1
                     corr_min, corr_max, diff_corr = _metricas_corredor_cidade(candidato_fb)
-                    corredor_flex = bool(diff_corr is not None and diff_corr > 1 and diff_corr <= TOLERANCIA_CORREDOR_MESMA_CIDADE)
+                    corredor_flex = bool(diff_corr is not None and diff_corr > 1 and diff_corr <= (int(tolerancia_corredor) if bool(usar_regra_corredor) else 999))
                     if corredor_flex:
                         fallback_corredor_flexibilizado += 1
                     tentativas.append(
@@ -857,7 +868,7 @@ def executar_m5_2_composicao_cidades(
                             "corredor_min": corr_min,
                             "corredor_max": corr_max,
                             "diff_corredor_max": diff_corr,
-                            "tolerancia_corredor_usada": int(TOLERANCIA_CORREDOR_MESMA_CIDADE),
+                            "tolerancia_corredor_usada": int(tolerancia_corredor) if bool(usar_regra_corredor) else 999,
                             "corredor_flexibilizado_mesma_cidade": corredor_flex,
                         }
                     )
@@ -880,10 +891,10 @@ def executar_m5_2_composicao_cidades(
                         candidato_limbo = pd.DataFrame(columns=ordenado.columns)
                         for _, row in ordenado.iterrows():
                             tmp = pd.concat([candidato_limbo, row.to_frame().T], ignore_index=True)
-                            ok_tmp, _ = _validar_fechamento_fallback_cidade(tmp, veic_limbo, TOLERANCIA_CORREDOR_MESMA_CIDADE)
+                            ok_tmp, _ = _validar_fechamento_fallback_cidade(tmp, veic_limbo, (int(tolerancia_corredor) if bool(usar_regra_corredor) else 999))
                             if ok_tmp or _validar_hard_constraints(tmp, veic_limbo)[0]:
                                 candidato_limbo = tmp
-                        ok_limbo, motivo_limbo = _validar_fechamento_fallback_cidade(candidato_limbo, veic_limbo, TOLERANCIA_CORREDOR_MESMA_CIDADE)
+                        ok_limbo, motivo_limbo = _validar_fechamento_fallback_cidade(candidato_limbo, veic_limbo, (int(tolerancia_corredor) if bool(usar_regra_corredor) else 999))
                         if ok_limbo:
                             tentativas.append({"cidade": cidade_key, "uf": uf_key, "tentativa_idx": None, "blocos_considerados": 0, "veiculo_tipo_tentado": safe_text(veic_limbo.get("tipo")), "veiculo_perfil_tentado": perfil_menor, "resultado": "fallback_limbo", "motivo": "split_limbo_fechado", "qtd_itens_candidato": int(len(candidato_limbo)), "qtd_paradas_candidato": qtd_paradas(candidato_limbo), "peso_total_candidato": round(peso_total(candidato_limbo), 3), "peso_kg_total_candidato": round(peso_auditoria_total(candidato_limbo), 3), "volume_total_candidato": round(volume_total(candidato_limbo), 3), "km_referencia_candidato": round(km_referencia(candidato_limbo), 2), "ocupacao_perc_candidato": round(ocupacao_perc(candidato_limbo, veic_limbo), 2)})
                             print(f"[M5 LIMBO] etapa=5.2 grupo={cidade_key}/{uf_key} peso={peso_total(city_df):.3f} perfil_menor={perfil_menor} perfil_maior={info_limbo.get('perfil_maior')}")

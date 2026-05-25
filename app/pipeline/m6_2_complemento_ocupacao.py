@@ -188,6 +188,8 @@ def executar_m6_2_complemento_ocupacao(
     tipo_roteirizacao: str,
     caminhos_pipeline: Optional[Dict[str, Any]] = None,
     ocupacao_alvo_perc: float = 95.0,
+    usar_regra_corredor: bool = True,
+    tolerancia_corredor: int = 2,
 ) -> Dict[str, Any]:
     if (
         not _tem_schema_minimo(df_manifestos_base_m6, COLS_MANIFESTOS_OBRIGATORIAS)
@@ -235,6 +237,8 @@ def executar_m6_2_complemento_ocupacao(
         )
 
     df_manifestos = _normalizar_manifestos(df_manifestos_base_m6)
+    df_manifestos["usar_regra_corredor"] = bool(usar_regra_corredor)
+    df_manifestos["tolerancia_corredor"] = int(tolerancia_corredor)
     df_estats = _normalizar_estatisticas_m6(df_estatisticas_manifestos_antes_m6)
     df_itens = _normalizar_itens_manifestos(df_itens_manifestos_base_m6)
     df_remanescente = _normalizar_remanescente(df_remanescente_m5_4)
@@ -884,7 +888,7 @@ def _simular_adicao_item_por_folga(
     if max_km_veiculo > 0 and km_item > max_km_veiculo:
         return False, "Item excede o raio máximo do perfil do veículo.", comparativo
 
-    if corredor_manifesto is not None and corredor_item is not None and diff_corredor is not None and diff_corredor > 2:
+    if bool(manifesto.get("usar_regra_corredor", True)) and corredor_manifesto is not None and corredor_item is not None and diff_corredor is not None and diff_corredor > int(manifesto.get("tolerancia_corredor", 2)):
         return False, "corredor_distante_m6_2", comparativo
 
     if estado_depois["qtd_paradas_final_m6_2"] > _to_int(manifesto.get("max_paradas_veiculo"), default=0):
