@@ -1265,6 +1265,16 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
     _print_log(f"[M4] df_itens_m4 linhas={_safe_len(df_itens_m4)}")
     _print_log(f"[M4] df_remanescente_m4 linhas={_safe_len(df_remanescente_m4)}")
 
+    parametros_ui = contexto.parametros_rodada or {}
+    modo_corredor_ui = str(parametros_ui.get("modo_corredor", "padrao") or "padrao").strip().lower()
+    if modo_corredor_ui not in {"padrao", "desligado", "ampliado"}:
+        modo_corredor_ui = "padrao"
+    amplitude_raw = parametros_ui.get("amplitude_corredor", None)
+    try:
+        amplitude_corredor_ui = int(amplitude_raw) if amplitude_raw is not None else None
+    except Exception:
+        amplitude_corredor_ui = None
+
     if PIPELINE_FLAGS.get("executar_validadores_exaustao") and PIPELINE_FLAGS.get("executar_m4_repescagem"):
         df_m4_repescagem_input, meta_m4_1 = _filtrar_remanescentes_com_potencial(
             df_remanescente_m4,
@@ -1287,6 +1297,8 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
                 tipo_roteirizacao=contexto.tipo_roteirizacao,
                 configuracao_frota=payload.configuracao_frota,
                 caminhos_pipeline=contexto.caminhos_pipeline,
+                modo_corredor=modo_corredor_ui,
+                amplitude_corredor=amplitude_corredor_ui,
             )
             df_manifestos_m4_1 = _copiar_ou_vazio(outputs_m4_1.get("df_manifestos_m4"))
             if df_manifestos_m4_1.empty:
@@ -1661,6 +1673,8 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             data_base_roteirizacao=contexto.data_base,
             tipo_roteirizacao=contexto.tipo_roteirizacao,
             caminhos_pipeline=contexto.caminhos_pipeline,
+            modo_corredor=modo_corredor_ui,
+            amplitude_corredor=amplitude_corredor_ui,
         )
     else:
         motivo_pulo = "sem_saldo_elegivel_m5_2" if not m5_2_tem_saldo else "sem_perfis_elegiveis_m5_2"
@@ -1721,6 +1735,8 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
                 data_base_roteirizacao=contexto.data_base,
                 tipo_roteirizacao=contexto.tipo_roteirizacao,
                 caminhos_pipeline=contexto.caminhos_pipeline,
+                modo_corredor=modo_corredor_ui,
+                amplitude_corredor=amplitude_corredor_ui,
             )
             df_premanifestos_m5_2_1 = _copiar_ou_vazio(outputs_m5_2_1.get("df_premanifestos_m5_2"))
             df_itens_premanifestos_m5_2_1 = _copiar_ou_vazio(outputs_m5_2_1.get("df_itens_premanifestos_m5_2"))
@@ -2117,6 +2133,8 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             data_base_roteirizacao=contexto.data_base,
             tipo_roteirizacao=contexto.tipo_roteirizacao,
             caminhos_pipeline=contexto.caminhos_pipeline,
+            modo_corredor=modo_corredor_ui,
+            amplitude_corredor=amplitude_corredor_ui,
         )
     else:
         if not m5_3b_habilitado:
@@ -2188,6 +2206,8 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
                 data_base_roteirizacao=contexto.data_base,
                 tipo_roteirizacao=contexto.tipo_roteirizacao,
                 caminhos_pipeline=contexto.caminhos_pipeline,
+                modo_corredor=modo_corredor_ui,
+                amplitude_corredor=amplitude_corredor_ui,
             )
             df_premanifestos_m5_3_1 = _copiar_ou_vazio(outputs_m5_3_1.get("df_premanifestos_m5_3"))
             df_itens_premanifestos_m5_3_1 = _copiar_ou_vazio(outputs_m5_3_1.get("df_itens_premanifestos_m5_3"))
@@ -2644,6 +2664,8 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             data_base_roteirizacao=contexto.data_base,
             tipo_roteirizacao=contexto.tipo_roteirizacao,
             caminhos_pipeline=contexto.caminhos_pipeline,
+            modo_corredor=modo_corredor_ui,
+            amplitude_corredor=amplitude_corredor_ui,
         )
     else:
         motivo_pulo = "sem_saldo_elegivel_m5_4b" if not m5_4b_tem_saldo else "sem_perfis_elegiveis_m5_4b"
@@ -2723,6 +2745,8 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
                 data_base_roteirizacao=contexto.data_base,
                 tipo_roteirizacao=contexto.tipo_roteirizacao,
                 caminhos_pipeline=contexto.caminhos_pipeline,
+                modo_corredor=modo_corredor_ui,
+                amplitude_corredor=amplitude_corredor_ui,
             )
             df_premanifestos_m5_4_1 = _copiar_ou_vazio(outputs_m5_4_1.get("df_premanifestos_m5_4"))
             df_itens_premanifestos_m5_4_1 = _copiar_ou_vazio(outputs_m5_4_1.get("df_itens_premanifestos_m5_4"))
@@ -3185,6 +3209,18 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
         and (not df_manifestos_base_m6_input.empty)
     )
 
+    usar_regra_corredor_m6_2 = True
+    tolerancia_corredor_m6_2 = 2
+    if modo_corredor_ui == "desligado":
+        usar_regra_corredor_m6_2 = False
+        tolerancia_corredor_m6_2 = 999
+    elif modo_corredor_ui == "ampliado":
+        usar_regra_corredor_m6_2 = True
+        try:
+            tolerancia_corredor_m6_2 = int(amplitude_corredor_ui) if amplitude_corredor_ui is not None else 2
+        except Exception:
+            tolerancia_corredor_m6_2 = 2
+
     if manifestos_base_validos_m6_2:
         resultado_m6_2 = executar_m6_2_complemento_ocupacao(
             df_manifestos_base_m6=df_manifestos_base_m6_input,
@@ -3195,6 +3231,8 @@ def _executar_pipeline_core(payload: RoteirizacaoRequest) -> Dict[str, Any]:
             tipo_roteirizacao=contexto.tipo_roteirizacao,
             caminhos_pipeline=contexto.caminhos_pipeline,
             ocupacao_alvo_perc=85.0,
+            usar_regra_corredor=usar_regra_corredor_m6_2,
+            tolerancia_corredor=tolerancia_corredor_m6_2,
         )
     else:
         resultado_m6_2 = {
