@@ -254,13 +254,13 @@ def executar_m2_enriquecimento(
         np.nan,
         parametros_dict=parametros_dict,
     )
+    dias_adicionais_folga_ui = float(folga_param_ui) if pd.notna(folga_param_ui) else 0.0
     carteira["folga_dias_calculada"] = carteira["dias_ate_data_alvo"] - carteira["transit_time_dias"]
-    if pd.notna(folga_param_ui):
-        carteira["folga_dias"] = float(folga_param_ui)
-        carteira["origem_folga"] = "manual_ui"
-    else:
-        carteira["folga_dias"] = carteira["folga_dias_calculada"]
-        carteira["origem_folga"] = "calculada_m2"
+    carteira["folga_dias"] = carteira["folga_dias_calculada"]
+    carteira["origem_folga"] = "calculada_m2"
+    carteira["dias_adicionais_folga_ui"] = dias_adicionais_folga_ui
+    carteira["janela_folga_padrao_dias"] = 2.0
+    carteira["janela_folga_efetiva_dias"] = carteira["janela_folga_padrao_dias"] + carteira["dias_adicionais_folga_ui"]
     carteira["status_folga"] = carteira["folga_dias"].apply(_classificar_status_folga)
 
     # ============================================================
