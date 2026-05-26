@@ -78,10 +78,10 @@ def executar_m3_triagem(
     Regras oficiais de triagem:
     1) roteirizavel
        - sem data_agenda e com data_leadtime preenchida
-       - com data_agenda e folga_dias >= 0 e < 2
+       - com data_agenda e folga_dias >= 0 e < limite_folga_efetivo
 
     2) agendamento_futuro
-       - com data_agenda e folga_dias >= 2
+       - com data_agenda e folga_dias >= limite_folga_efetivo
 
     3) agenda_vencida
        - com data_agenda e folga_dias < 0
@@ -90,7 +90,7 @@ def executar_m3_triagem(
     - A coluna de verdade para agenda é somente data_agenda (Agendam.)
     - A coluna textual Agenda não participa da regra
     - Não existe mais categoria aguardando_agendamento
-    - folga_dias == 2 entra em agendamento_futuro
+    - limite_folga_efetivo = 2 + dias_adicionais_folga_ui
 
     Regra crítica preservada:
     - este módulo não recalcula peso
@@ -194,8 +194,19 @@ def executar_m3_triagem(
         carteira["ranking_preliminar"], errors="coerce"
     )
 
-    carteira["status_triagem"] = carteira.apply(_classificar_status_triagem, axis=1)
-    carteira["motivo_triagem"] = carteira.apply(_definir_motivo_triagem, axis=1)
+    dias_adicionais_folga_ui = _extrair_dias_adicionais_folga_ui(carteira)
+    limite_folga_efetivo = 2.0 + dias_adicionais_folga_ui
+
+    carteira["status_triagem"] = carteira.apply(
+        _classificar_status_triagem,
+        axis=1,
+        args=(limite_folga_efetivo,),
+    )
+    carteira["motivo_triagem"] = carteira.apply(
+        _definir_motivo_triagem,
+        axis=1,
+        args=(limite_folga_efetivo,),
+    )
     carteira["grupo_saida"] = carteira["status_triagem"].apply(_definir_grupo_saida)
     carteira["prioridade_label"] = carteira.apply(_definir_prioridade_label, axis=1)
     carteira["ranking_prioridade_operacional"] = carteira.apply(_definir_ranking_operacional, axis=1)
@@ -220,8 +231,8 @@ def executar_m3_triagem(
         carteira.index,
     )
 
-    mask_folga_lt_2 = _serie_bool_safe(
-        folga_num.lt(2),
+    mask_folga_lt_limite = _serie_bool_safe(
+        folga_num.lt(limite_folga_efetivo),
         carteira.index,
     )
 
@@ -229,7 +240,7 @@ def executar_m3_triagem(
         mask_status_roteirizavel
         & mask_data_agenda_valida
         & mask_folga_ge_0
-        & mask_folga_lt_2
+        & mask_folga_lt_limite
     ).astype(bool)
 
     df_carteira_triagem = pd.concat([carteira.copy(), df_redespacho_excecoes, df_conf_excecoes], ignore_index=True, sort=False)
@@ -273,6 +284,7 @@ def executar_m3_triagem(
         df_carteira_roteirizavel=df_carteira_roteirizavel,
         df_carteira_agendamento_futuro=df_carteira_agendamento_futuro,
         df_carteira_agendas_vencidas=df_carteira_agendas_vencidas,
+        limite_folga_efetivo=limite_folga_efetivo,
     )
 
     resumo = _montar_resumo_m3(
@@ -286,6 +298,8 @@ def executar_m3_triagem(
         total_conf_finalizada=total_conf_finalizada,
         data_base_roteirizacao=data_base_roteirizacao,
         caminhos_pipeline=caminhos_pipeline or {},
+        dias_adicionais_folga_ui=dias_adicionais_folga_ui,
+        limite_folga_efetivo=limite_folga_efetivo,
     )
 
     resultado = {
@@ -324,7 +338,7 @@ def _validar_colunas_minimas(df: pd.DataFrame) -> None:
         )
 
 
-def _classificar_status_triagem(row: pd.Series) -> str:
+def _classificar_status_triagem(row: pd.Series, limite_folga_efetivo: float) -> str:
     data_agenda = row["data_agenda"]
     data_leadtime = row["data_leadtime"]
     folga = row["folga_dias"]
@@ -336,10 +350,10 @@ def _classificar_status_triagem(row: pd.Series) -> str:
         return "excecao_triagem"
 
     # Com data_agenda: classifica pela folga
-    if pd.notna(folga) and 0 <= folga < 2:
+    if pd.notna(folga) and 0 <= folga < limite_folga_efetivo:
         return "roteirizavel"
 
-    if pd.notna(folga) and folga >= 2:
+    if pd.notna(folga) and folga >= limite_folga_efetivo:
         return "agendamento_futuro"
 
     if pd.notna(folga) and folga < 0:
@@ -348,7 +362,7 @@ def _classificar_status_triagem(row: pd.Series) -> str:
     return "excecao_triagem"
 
 
-def _definir_motivo_triagem(row: pd.Series) -> str:
+def _definir_motivo_triagem(row: pd.Series, limite_folga_efetivo: float) -> str:
     status = row["status_triagem"]
     data_agenda = row["data_agenda"]
     data_leadtime = row["data_leadtime"]
@@ -357,12 +371,12 @@ def _definir_motivo_triagem(row: pd.Series) -> str:
     if status == "roteirizavel":
         if pd.isna(data_agenda) and pd.notna(data_leadtime):
             return "leadtime_preenchido_sem_data_agenda"
-        return "agendada_com_folga_positiva_menor_que_2"
+        return f"agendada_com_folga_positiva_menor_que_{limite_folga_efetivo:g}"
 
     if status == "agendamento_futuro":
-        if pd.notna(folga) and folga == 2:
-            return "agendada_com_folga_igual_a_2"
-        return "agendada_com_folga_maior_ou_igual_a_2"
+        if pd.notna(folga) and folga == limite_folga_efetivo:
+            return f"agendada_com_folga_igual_a_{limite_folga_efetivo:g}"
+        return f"agendada_com_folga_maior_ou_igual_a_{limite_folga_efetivo:g}"
 
     if status == "agenda_vencida":
         return "agendada_com_folga_negativa"
@@ -423,11 +437,21 @@ def _definir_ranking_operacional(row: pd.Series) -> int:
     return 9
 
 
+def _extrair_dias_adicionais_folga_ui(df: pd.DataFrame) -> float:
+    if "dias_adicionais_folga_ui" not in df.columns:
+        return 0.0
+    serie = pd.to_numeric(df["dias_adicionais_folga_ui"], errors="coerce").dropna()
+    if serie.empty:
+        return 0.0
+    return float(serie.iloc[0])
+
+
 def _validar_integridade_fechamento(
     df_entrada: pd.DataFrame,
     df_carteira_roteirizavel: pd.DataFrame,
     df_carteira_agendamento_futuro: pd.DataFrame,
     df_carteira_agendas_vencidas: pd.DataFrame,
+    limite_folga_efetivo: float,
 ) -> None:
     qtd_entrada = len(df_entrada)
     qtd_saida = (
@@ -447,12 +471,13 @@ def _validar_integridade_fechamento(
         & (
             df_carteira_roteirizavel["folga_dias"].isna()
             | (df_carteira_roteirizavel["folga_dias"] < 0)
-            | (df_carteira_roteirizavel["folga_dias"] >= 2)
+            | (df_carteira_roteirizavel["folga_dias"] >= limite_folga_efetivo)
         )
     ]
     if len(violacoes_roteirizavel_agendadas) > 0:
         raise Exception(
-            "A carteira roteirizável ficou contaminada com linhas agendadas fora da faixa permitida (0 <= folga < 2)."
+            "A carteira roteirizável ficou contaminada com linhas agendadas fora da faixa permitida "
+            f"(0 <= folga < {limite_folga_efetivo:g})."
         )
 
     violacoes_roteirizavel_leadtime = df_carteira_roteirizavel.loc[
@@ -467,12 +492,13 @@ def _validar_integridade_fechamento(
     violacoes_futuro = df_carteira_agendamento_futuro.loc[
         ~(
             df_carteira_agendamento_futuro["data_agenda"].notna()
-            & (df_carteira_agendamento_futuro["folga_dias"] >= 2)
+            & (df_carteira_agendamento_futuro["folga_dias"] >= limite_folga_efetivo)
         )
     ]
     if len(violacoes_futuro) > 0:
         raise Exception(
-            "A carteira de agendamento futuro ficou com linhas incompatíveis com a regra (data_agenda preenchida e folga >= 2)."
+            "A carteira de agendamento futuro ficou com linhas incompatíveis com a regra "
+            f"(data_agenda preenchida e folga >= {limite_folga_efetivo:g})."
         )
 
     violacoes_vencidas = df_carteira_agendas_vencidas.loc[
@@ -505,6 +531,8 @@ def _montar_resumo_m3(
     total_conf_finalizada: int,
     data_base_roteirizacao: datetime,
     caminhos_pipeline: Dict[str, Any],
+    dias_adicionais_folga_ui: float,
+    limite_folga_efetivo: float,
 ) -> Dict[str, Any]:
     status_counts = (
         df_carteira_triagem["status_triagem"]
@@ -520,10 +548,13 @@ def _montar_resumo_m3(
         .to_dict()
     )
 
-    qtd_folga_2_futuro = int(
+    qtd_folga_limite_futuro = int(
         (
             df_carteira_agendamento_futuro["data_agenda"].notna()
-            & (pd.to_numeric(df_carteira_agendamento_futuro["folga_dias"], errors="coerce") == 2)
+            & (
+                pd.to_numeric(df_carteira_agendamento_futuro["folga_dias"], errors="coerce")
+                == limite_folga_efetivo
+            )
         ).sum()
     )
 
@@ -544,13 +575,16 @@ def _montar_resumo_m3(
         "total_conf_finalizada": int(total_conf_finalizada),
         "agendadas_na_roteirizavel": int(df_carteira_roteirizavel["data_agenda"].notna().sum()),
         "leadtime_na_roteirizavel": int(df_carteira_roteirizavel["data_agenda"].isna().sum()),
-        "agendadas_folga_igual_2_em_agendamento_futuro": qtd_folga_2_futuro,
+        "agendadas_folga_igual_ao_limite_em_agendamento_futuro": qtd_folga_limite_futuro,
         "status_triagem_counts": status_counts,
         "prioridade_roteirizavel_counts": prioridade_counts,
         "peso_kg_nulo_roteirizavel": int(df_carteira_roteirizavel["peso_kg"].isna().sum()),
         "peso_calculado_nulo_roteirizavel": int(df_carteira_roteirizavel["peso_calculado"].isna().sum()),
-        "regra_agendada_roteirizavel": "0 <= folga_dias < 2",
-        "regra_agendamento_futuro": "folga_dias >= 2",
+        "janela_folga_padrao_dias": 2.0,
+        "dias_adicionais_folga_ui": float(dias_adicionais_folga_ui),
+        "limite_folga_efetivo": float(limite_folga_efetivo),
+        "regra_agendada_roteirizavel": f"0 <= folga_dias < {limite_folga_efetivo:g}",
+        "regra_agendamento_futuro": f"folga_dias >= {limite_folga_efetivo:g}",
         "regra_agenda_vencida": "folga_dias < 0",
         "caminhos_pipeline": caminhos_pipeline,
     }
