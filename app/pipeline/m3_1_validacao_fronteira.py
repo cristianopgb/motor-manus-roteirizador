@@ -152,6 +152,16 @@ def _tipagem_defensiva(df: pd.DataFrame) -> None:
         df["veiculo_exclusivo_flag"] = df["veiculo_exclusivo_flag"].fillna(False).astype(bool)
 
 
+def _obter_limite_folga_efetivo(df: pd.DataFrame) -> float:
+    if "janela_folga_efetiva_dias" in df.columns:
+        serie = pd.to_numeric(df["janela_folga_efetiva_dias"], errors="coerce").dropna()
+        if not serie.empty:
+            return float(serie.iloc[0])
+    return 2.0
+
+
+
+
 def _validacoes_duras(df: pd.DataFrame) -> None:
     problemas: list[str] = []
 
@@ -167,18 +177,19 @@ def _validacoes_duras(df: pd.DataFrame) -> None:
             f"Linhas com grupo_saida diferente de 'df_carteira_roteirizavel': {len(invalidas_grupo)}"
         )
 
-    # Regra 1: se tem data_agenda, a folga válida para roteirizável é 0 <= folga < 2
+    # Regra 1: se tem data_agenda, a folga válida para roteirizável é 0 <= folga < limite efetivo
+    limite_folga_efetivo = _obter_limite_folga_efetivo(df)
     agendadas_invalidas = df.loc[
         df["data_agenda"].notna()
         & (
             df["folga_dias"].isna()
             | (df["folga_dias"] < 0)
-            | (df["folga_dias"] >= 2)
+            | (df["folga_dias"] >= limite_folga_efetivo)
         )
     ]
     if len(agendadas_invalidas) > 0:
         problemas.append(
-            f"Linhas com data_agenda fora da faixa permitida para roteirização (0 <= folga < 2): {len(agendadas_invalidas)}"
+            f"Linhas com data_agenda fora da faixa permitida para roteirização (0 <= folga < {limite_folga_efetivo:g}): {len(agendadas_invalidas)}"
         )
 
     # Regra 2: se não tem data_agenda, deve ter DLE preenchido
